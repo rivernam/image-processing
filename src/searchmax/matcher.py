@@ -7,6 +7,9 @@ import numpy as np
 from .models import MatchResult, Rect, SearchSettings, TrainModel
 
 
+MAX_CANDIDATES_PER_SCALE = 1_000
+
+
 def iou(a: Rect, b: Rect) -> float:
     x1 = max(a.x, b.x)
     y1 = max(a.y, b.y)
@@ -39,11 +42,43 @@ def _local_peaks(
     threshold: float,
 ) -> list[tuple[int, int, float]]:
     dilated = cv2.dilate(score_map, np.ones((3, 3), np.uint8))
-    ys, xs = np.where((score_map >= threshold) & (score_map == dilated))
+    peak_mask = ((score_map >= threshold) & (score_map == dilated)).astype(np.uint8)
+    if not np.any(peak_mask):
+        return []
+
+    _, labels = cv2.connectedComponents(peak_mask)
+    ys, xs = np.where(peak_mask)
+    point_labels = labels[ys, xs]
+    _, first_indices = np.unique(point_labels, return_index=True)
+    ys = ys[first_indices]
+    xs = xs[first_indices]
+    scores = score_map[ys, xs]
+    order = np.lexsort((xs, ys, -scores))[:MAX_CANDIDATES_PER_SCALE]
     return [
         (int(x), int(y), float(score_map[y, x]))
-        for y, x in zip(ys, xs)
+        for y, x in zip(ys[order], xs[order])
     ]
+
+
+def _scale_values(settings: SearchSettings) -> list[float]:
+    span = settings.max_scale - settings.min_scale
+    tolerance = max(
+        abs(settings.min_scale),
+        abs(settings.max_scale),
+        abs(settings.scale_step),
+        1.0,
+    ) * 1e-12
+    step_count = int(np.floor(span / settings.scale_step + 1e-12))
+    scales: list[float] = []
+    for index in range(step_count + 1):
+        scale = settings.min_scale + index * settings.scale_step
+        if scale > settings.max_scale:
+            if scale - settings.max_scale <= tolerance:
+                scale = settings.max_scale
+            else:
+                break
+        scales.append(scale)
+    return scales
 
 
 def match(
@@ -59,13 +94,7 @@ def match(
         else cv2.cvtColor(search_image, cv2.COLOR_BGR2GRAY)
     )
     template0 = model.color if settings.color_mode == "color" else model.gray
-    scales = np.arange(
-        settings.min_scale,
-        settings.max_scale + settings.scale_step / 2,
-        settings.scale_step,
-    )
-
-    for scale in scales:
+    for scale in _scale_values(settings):
         scaled_width = round(template0.shape[1] * float(scale))
         scaled_height = round(template0.shape[0] * float(scale))
         if scaled_width < 1 or scaled_height < 1:
@@ -92,12 +121,13 @@ def match(
     if not candidates:
         return []
 
+    selected = non_max_suppression(
+        candidates,
+        settings.nms_iou_threshold,
+        settings.max_results,
+    )
     elapsed_ms = (perf_counter() - started) * 1000
     return [
         replace(result, elapsed_ms=elapsed_ms)
-        for result in non_max_suppression(
-            candidates,
-            settings.nms_iou_threshold,
-            settings.max_results,
-        )
+        for result in selected
     ]

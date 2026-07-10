@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
+import searchmax.matcher as matcher_module
 from searchmax.matcher import _local_peaks, iou, match, non_max_suppression
 from searchmax.models import MatchResult, Rect, SearchSettings
 from searchmax.training import train_from_roi
@@ -61,6 +62,28 @@ def test_match_finds_scaled_pattern():
     assert result.box.y == 50
 
 
+def test_match_does_not_evaluate_a_scale_above_a_non_aligned_maximum(monkeypatch):
+    _, model = train_pattern()
+    image = np.full((100, 140, 3), 35, np.uint8)
+    evaluated_scales = 0
+
+    def record_peak_evaluation(score_map, threshold):
+        nonlocal evaluated_scales
+        evaluated_scales += 1
+        return []
+
+    monkeypatch.setattr(matcher_module, "_local_peaks", record_peak_evaluation)
+    settings = SearchSettings(
+        min_scale=1.0,
+        max_scale=1.019,
+        scale_step=.02,
+    )
+
+    match(model, image, settings)
+
+    assert evaluated_scales == 1
+
+
 def test_local_peaks_keep_only_neighborhood_maxima_above_threshold():
     score_map = np.array([
         [.1, .1, .1, .1, .1],
@@ -72,6 +95,30 @@ def test_local_peaks_keep_only_neighborhood_maxima_above_threshold():
 
     assert [(x, y) for x, y, _ in peaks] == [(1, 1), (4, 1)]
     assert [score for _, _, score in peaks] == pytest.approx([.95, .91])
+
+
+def test_local_peaks_collapse_an_equal_score_plateau_deterministically():
+    score_map = np.full((5, 5), .95, dtype=np.float32)
+
+    peaks = _local_peaks(score_map, .8)
+
+    assert [(x, y) for x, y, _ in peaks] == [(0, 0)]
+    assert peaks[0][2] == pytest.approx(.95)
+
+
+def test_local_peaks_apply_a_deterministic_per_scale_cap():
+    max_candidates_per_scale = 1_000
+    score_map = np.zeros((100, 100), dtype=np.float32)
+    score_map[::3, ::3] = .9
+    expected_positions = [
+        (x, y)
+        for y in range(0, 100, 3)
+        for x in range(0, 100, 3)
+    ][:max_candidates_per_scale]
+
+    peaks = _local_peaks(score_map, .8)
+
+    assert [(x, y) for x, y, _ in peaks] == expected_positions
 
 
 def test_iou_uses_intersection_over_union():
@@ -140,3 +187,33 @@ def test_match_honors_max_results_one():
     )
 
     assert len(match(model, image, settings)) == 1
+
+
+def test_match_captures_elapsed_time_after_final_selection(monkeypatch):
+    template, model = train_pattern()
+    image = np.full((80, 100, 3), 35, np.uint8)
+    image[20:44, 30:62] = template
+    events = []
+    clock_values = iter([10.0, 10.25])
+    original_nms = matcher_module.non_max_suppression
+
+    def fake_perf_counter():
+        events.append("clock")
+        return next(clock_values)
+
+    def tracking_nms(candidates, threshold, limit):
+        events.append("nms")
+        return original_nms(candidates, threshold, limit)
+
+    monkeypatch.setattr(matcher_module, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(matcher_module, "non_max_suppression", tracking_nms)
+    settings = SearchSettings(
+        min_scale=1,
+        max_scale=1,
+        threshold=.95,
+    )
+
+    result = match(model, image, settings)[0]
+
+    assert events == ["clock", "nms", "clock"]
+    assert result.elapsed_ms == pytest.approx(250.0)
