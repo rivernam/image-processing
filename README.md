@@ -58,11 +58,14 @@ PowerShell에서 실행 정책 때문에 활성화가 차단되면 활성화 없
 
 점수는 OpenCV의 정규화 상관 템플릿 매칭 값이며 UI에서는 0–1 범위로 표시됩니다. `Final Results`는 Threshold를 통과한 후보에 NMS(겹침 억제)를 적용한 뒤 점수순으로 `Maximum results`개까지 제한한 결과입니다. `Show diagnostic candidates`의 `Diagnostics` 표는 디버깅을 위해 검색 제한을 최대 100개로 확대한 **NMS 이후 후보**입니다. 즉, threshold 이전의 원시 score-map 전체나 NMS 이전 후보가 아닙니다.
 
+결과 표의 X와 Y는 검출 상자 왼쪽 위 위치의 이미지 픽셀 좌표이고, Width와 Height는 검출 경계 상자의 픽셀 크기입니다. Scale은 학습 템플릿 크기에 대한 검출 배율입니다. Elapsed ms는 해당 이미지의 전체 배율 탐색, 후보 선택, NMS까지 걸린 검색 시간이며 결과 행별 독립 측정 시간이 아닙니다. 같은 이미지의 결과 행에는 같은 검색 시간이 표시됩니다.
+
 생성 샘플의 `success`는 최종 검출 상자와 생성 정답 상자의 IoU가 0.5 이상이라는 뜻입니다. CSV의 `score`, `iou`, `center_error`, `scale_error_percent`, `elapsed_ms`는 각각 선택된 검출의 점수, 상자 IoU, 중심점 픽셀 오차, 정답 대비 배율 오차(%), 이미지 검색 시간을 뜻합니다. 검출이 없으면 score와 일부 오차 값은 비어 있을 수 있습니다.
 
 ## 저장 파일
 
 - 프로젝트는 UTF-8 JSON이며 학습 이미지 경로, ROI, 검색 설정, 생성 설정을 저장합니다. 프로젝트 폴더 안의 학습 이미지는 가능한 경우 프로젝트 파일 기준 상대 경로로 기록되고, 외부 이미지는 절대 경로가 될 수 있습니다. 프로젝트를 옮길 때 상대 경로 이미지도 함께 옮기고, 절대 경로 파일은 같은 위치에 유지해야 합니다. 생성 이미지와 검색 결과 자체는 프로젝트에 포함되지 않습니다.
+- 생성 샘플 메타데이터 JSON은 프로젝트 JSON과 별도인 스키마 버전 1 파일입니다. 루트에는 `schema_version: 1`과 `samples` 목록이 있고, 각 샘플은 `image_path`, `truth_box`, `transform`, `seed`를 가집니다. `truth_box`는 생성 이미지 안의 정답 상자이고, `transform`에는 `scale`, `brightness`, `contrast`, `blur_kernel`, `noise_sigma`가 들어갑니다. 상대 `image_path`는 메타데이터 JSON 파일의 폴더를 기준으로 해석됩니다.
 - 평가 CSV는 Excel에서 한글 경로를 읽을 수 있도록 UTF-8 BOM으로 저장되며 열은 `image, success, score, iou, center_error, scale_error_percent, elapsed_ms`입니다. CSV 내 이미지 경로는 실행 시 샘플 경로 문자열입니다.
 - 생성 이미지는 `Generate Samples`에서 선택한 폴더에 `sample_0001.png` 형식으로 저장됩니다. 같은 폴더/이름이 있으면 덮어쓸 수 있으므로 필요한 결과는 별도 폴더를 사용하십시오.
 

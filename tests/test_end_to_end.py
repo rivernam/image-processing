@@ -19,7 +19,7 @@ def test_generated_clean_samples_are_detected(tmp_path):
     samples = generate_samples(
         model,
         [],
-        tmp_path,
+        tmp_path / "한글 샘플",
         GenerationSettings(
             count=5,
             seed=7,
@@ -36,4 +36,5 @@ def test_generated_clean_samples_are_detected(tmp_path):
         matches = match(model, image, SearchSettings(threshold=0.75))
         records.append(evaluate_sample(sample, matches, (44, 28), 0.5))
 
+    assert len(samples) == len(records) == 5
     assert all(record.success for record in records)
