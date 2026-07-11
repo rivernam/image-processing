@@ -64,7 +64,7 @@ def test_generated_boxes_and_scales_stay_in_bounds(tmp_path):
     template = np.zeros((20, 30, 3), np.uint8)
     template[:, 5:25] = (20, 140, 250)
     model = train_from_roi(template, Path("t.png"), Rect(0, 0, 30, 20))
-    settings = GenerationSettings(count=10, seed=3, output_size=(35, 22))
+    settings = GenerationSettings(count=10, seed=3, output_size=(45, 30))
 
     samples = generate_samples(model, [], tmp_path, settings)
 
@@ -72,35 +72,66 @@ def test_generated_boxes_and_scales_stay_in_bounds(tmp_path):
     for index, sample in enumerate(samples, start=1):
         box = sample.truth_box
         assert sample.image_path.name == f"sample_{index:04d}.png"
-        assert read_image(sample.image_path).shape == (22, 35, 3)
-        assert 0 <= box.x <= box.x + box.width <= 35
-        assert 0 <= box.y <= box.y + box.height <= 22
+        assert read_image(sample.image_path).shape == (30, 45, 3)
+        assert 0 <= box.x <= box.x + box.width <= 45
+        assert 0 <= box.y <= box.y + box.height <= 30
         assert settings.min_scale <= sample.transform.scale <= settings.max_scale
         assert box.width == max(1, round(30 * sample.transform.scale))
         assert box.height == max(1, round(20 * sample.transform.scale))
 
 
-def test_fitting_scale_never_falls_below_minimum_at_rounding_boundary(tmp_path):
-    template = np.zeros((8, 8, 3), np.uint8)
-    template[:, 2:6] = (20, 140, 250)
-    model = train_from_roi(template, Path("t.png"), Rect(0, 0, 8, 8))
+def test_generation_rejects_scale_range_when_maximum_does_not_fit(tmp_path):
+    template = np.zeros((20, 30, 3), np.uint8)
+    template[:, 5:25] = (20, 140, 250)
+    model = train_from_roi(template, Path("t.png"), Rect(0, 0, 30, 20))
+    settings = GenerationSettings(count=1, output_size=(35, 22))
+
+    with pytest.raises(ValueError, match="max_scale"):
+        generate_samples(model, [], tmp_path, settings)
+
+
+def test_valid_generation_samples_the_configured_scale_range(tmp_path):
+    template = np.zeros((20, 30, 3), np.uint8)
+    template[:, 5:25] = (20, 140, 250)
+    model = train_from_roi(template, Path("t.png"), Rect(0, 0, 30, 20))
     settings = GenerationSettings(
-        count=1,
-        seed=4,
-        output_size=(10, 10),
-        min_scale=1.3125,
-        max_scale=2,
+        count=100,
+        seed=19,
+        output_size=(45, 30),
         brightness_range=(0, 0),
         contrast_range=(1, 1),
         blur_choices=(0,),
         noise_sigma_range=(0, 0),
     )
 
-    [sample] = generate_samples(model, [], tmp_path, settings)
+    samples = generate_samples(
+        model, [np.full((30, 45, 3), 100, np.uint8)], tmp_path, settings
+    )
 
-    assert sample.transform.scale >= settings.min_scale
-    assert sample.truth_box.width <= 10
-    assert sample.truth_box.height <= 10
+    scales = [sample.transform.scale for sample in samples]
+    assert min(scales) < 0.85
+    assert max(scales) > 1.45
+    assert all(settings.min_scale <= scale <= settings.max_scale for scale in scales)
+
+
+@pytest.mark.parametrize(
+    "background",
+    [
+        np.empty((0, 10, 3), np.uint8),
+        np.zeros((10, 10, 3), np.float32),
+        np.zeros((10, 10), np.uint8),
+        np.zeros((10, 10, 1), np.uint8),
+        np.zeros((10, 10, 4), np.uint8),
+    ],
+)
+def test_generation_rejects_invalid_background_arrays(tmp_path, background):
+    template = np.zeros((10, 12, 3), np.uint8)
+    template[:, 2:10] = (30, 150, 240)
+    model = train_from_roi(template, Path("template.png"), Rect(0, 0, 12, 10))
+    settings = GenerationSettings(count=1, output_size=(32, 24))
+
+    with pytest.raises(ValueError, match="background"):
+        generate_samples(model, [background], tmp_path, settings)
 
 
 def test_supplied_background_and_recorded_full_image_transform_are_exact(tmp_path):

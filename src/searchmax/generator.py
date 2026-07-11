@@ -110,6 +110,30 @@ def _fallback_background(
     return image
 
 
+def _scaled_size(
+    template_width: int, template_height: int, scale: float
+) -> tuple[int, int]:
+    return (
+        max(1, round(template_width * scale)),
+        max(1, round(template_height * scale)),
+    )
+
+
+def _validate_backgrounds(backgrounds: list[np.ndarray]) -> None:
+    for index, background in enumerate(backgrounds):
+        if not isinstance(background, np.ndarray):
+            raise ValueError(f"background {index} must be a NumPy array")
+        if background.dtype != np.uint8:
+            raise ValueError(f"background {index} must have uint8 dtype")
+        if (
+            background.ndim != 3
+            or background.shape[2] != 3
+            or background.shape[0] == 0
+            or background.shape[1] == 0
+        ):
+            raise ValueError(f"background {index} must be a non-empty BGR image")
+
+
 def generate_samples(
     model: TrainModel,
     backgrounds: list[np.ndarray],
@@ -119,25 +143,17 @@ def generate_samples(
     rng = np.random.default_rng(settings.seed)
     output_width, output_height = settings.output_size
     template_height, template_width = model.color.shape[:2]
-    min_width = max(1, round(template_width * settings.min_scale))
-    min_height = max(1, round(template_height * settings.min_scale))
+    min_width, min_height = _scaled_size(
+        template_width, template_height, settings.min_scale
+    )
     if min_width > output_width or min_height > output_height:
         raise ValueError("template does not fit output_size at min_scale")
-    fitting_max_scale = settings.max_scale
-    if (
-        round(template_width * fitting_max_scale) > output_width
-        or round(template_height * fitting_max_scale) > output_height
-    ):
-        width_limit = np.nextafter(
-            (output_width + 0.5) / template_width, -np.inf
-        )
-        height_limit = np.nextafter(
-            (output_height + 0.5) / template_height, -np.inf
-        )
-        fitting_max_scale = max(
-            settings.min_scale,
-            min(fitting_max_scale, width_limit, height_limit),
-        )
+    max_width, max_height = _scaled_size(
+        template_width, template_height, settings.max_scale
+    )
+    if max_width > output_width or max_height > output_height:
+        raise ValueError("template does not fit output_size at max_scale")
+    _validate_backgrounds(backgrounds)
     samples = []
 
     for index in range(settings.count):
@@ -147,9 +163,10 @@ def generate_samples(
         else:
             image = _fallback_background(rng, output_width, output_height)
 
-        scale = float(rng.uniform(settings.min_scale, fitting_max_scale))
-        scaled_width = max(1, round(template_width * scale))
-        scaled_height = max(1, round(template_height * scale))
+        scale = float(rng.uniform(settings.min_scale, settings.max_scale))
+        scaled_width, scaled_height = _scaled_size(
+            template_width, template_height, scale
+        )
         resized = cv2.resize(model.color, (scaled_width, scaled_height))
         x = int(rng.integers(0, output_width - scaled_width + 1))
         y = int(rng.integers(0, output_height - scaled_height + 1))
