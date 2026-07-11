@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from numbers import Real
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
@@ -29,6 +31,7 @@ class ImageView(QGraphicsView):
     ITEM_INDEX_ROLE = 1
     MIN_ZOOM = 0.1
     MAX_ZOOM = 20.0
+    CENTER_RADIUS = 3.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,8 +46,10 @@ class ImageView(QGraphicsView):
         self._roi_enabled = False
         self._roi_item: QGraphicsRectItem | None = None
         self._roi_drag_start: QPointF | None = None
-        self._match_items: list[tuple[QGraphicsRectItem, QGraphicsTextItem]] = []
-        self._truth_item: QGraphicsRectItem | None = None
+        self._match_items: list[
+            tuple[QGraphicsRectItem, QGraphicsTextItem, QGraphicsEllipseItem]
+        ] = []
+        self._truth_items: tuple[QGraphicsRectItem, QGraphicsEllipseItem] | None = None
         self._zoom_factor = 1.0
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
@@ -79,7 +84,7 @@ class ImageView(QGraphicsView):
 
         self.scene().clear()
         self._roi_item = None
-        self._truth_item = None
+        self._truth_items = None
         self._match_items.clear()
         self._roi_drag_start = None
 
@@ -112,6 +117,11 @@ class ImageView(QGraphicsView):
 
     def set_roi_enabled(self, enabled: bool) -> None:
         self._roi_enabled = bool(enabled)
+        if not self._roi_enabled and self._roi_drag_start is not None:
+            self._roi_drag_start = None
+            if self._roi_item is not None:
+                self.scene().removeItem(self._roi_item)
+                self._roi_item = None
         self.setDragMode(
             QGraphicsView.DragMode.NoDrag
             if self._roi_enabled
@@ -138,34 +148,51 @@ class ImageView(QGraphicsView):
 
     def set_matches(self, matches: Sequence[MatchResult]) -> None:
         """Replace all match boxes and their rank/score labels."""
-        self._remove_match_items()
+        validated: list[tuple[MatchResult, str]] = []
         for index, match in enumerate(matches):
             if not isinstance(match, MatchResult):
                 raise TypeError("matches must contain MatchResult values")
-            box = self._add_box(match.box, QColor("#ff5252"), "match", index, 2.0)
-            label = self.scene().addText(f"#{index + 1} {match.score:.3f}")
+            self._validate_rect(match.box)
+            if isinstance(match.score, bool) or not isinstance(match.score, Real):
+                raise TypeError("match score must be a real number")
+            if not math.isfinite(float(match.score)):
+                raise ValueError("match score must be finite")
+            validated.append((match, f"#{index + 1} {match.score:.3f}"))
+
+        self._remove_match_items()
+        for index, (match, label_text) in enumerate(validated):
+            box, center = self._add_box(
+                match.box, QColor("#ff5252"), "match", index, 2.0
+            )
+            label = self.scene().addText(label_text)
             label.setDefaultTextColor(QColor("#ffeb3b"))
             label.setPos(match.box.x, match.box.y)
             label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
             label.setData(self.ITEM_KIND_ROLE, "match-label")
             label.setData(self.ITEM_INDEX_ROLE, index)
             label.setZValue(3)
-            self._match_items.append((box, label))
+            self._match_items.append((box, label, center))
 
     def highlight_match(self, index: int | None) -> None:
         """Highlight one zero-based match index, or clear the highlight."""
-        for item_index, (box, _) in enumerate(self._match_items):
+        for item_index, (box, _, _) in enumerate(self._match_items):
             pen = box.pen()
             pen.setWidthF(4.0 if item_index == index else 2.0)
             box.setPen(pen)
 
     def set_truth(self, truth: Rect | None) -> None:
         """Replace the ground-truth overlay, or clear it with ``None``."""
-        if self._truth_item is not None:
-            self.scene().removeItem(self._truth_item)
-            self._truth_item = None
         if truth is not None:
-            self._truth_item = self._add_box(truth, QColor("#00e676"), "truth", None, 2.0)
+            self._validate_rect(truth)
+
+        if self._truth_items is not None:
+            for item in self._truth_items:
+                self.scene().removeItem(item)
+            self._truth_items = None
+        if truth is not None:
+            self._truth_items = self._add_box(
+                truth, QColor("#00e676"), "truth", None, 2.0
+            )
 
     def set_truth_box(self, truth: Rect | None) -> None:
         """Compatibility spelling for :meth:`set_truth`."""
@@ -230,16 +257,38 @@ class ImageView(QGraphicsView):
         kind: str,
         index: int | None,
         width: float,
-    ) -> QGraphicsRectItem:
-        item = self.scene().addRect(
+    ) -> tuple[QGraphicsRectItem, QGraphicsEllipseItem]:
+        box = self.scene().addRect(
             QRectF(rect.x, rect.y, rect.width, rect.height),
             self._overlay_pen(color, width),
         )
-        item.setData(self.ITEM_KIND_ROLE, kind)
+        box.setData(self.ITEM_KIND_ROLE, kind)
         if index is not None:
-            item.setData(self.ITEM_INDEX_ROLE, index)
-        item.setZValue(2)
-        return item
+            box.setData(self.ITEM_INDEX_ROLE, index)
+        box.setZValue(2)
+
+        center_x = rect.x + rect.width / 2.0
+        center_y = rect.y + rect.height / 2.0
+        radius = self.CENTER_RADIUS
+        center = self.scene().addEllipse(
+            QRectF(center_x - radius, center_y - radius, radius * 2, radius * 2),
+            self._overlay_pen(color, 2.0),
+        )
+        center.setData(self.ITEM_KIND_ROLE, f"{kind}-center")
+        if index is not None:
+            center.setData(self.ITEM_INDEX_ROLE, index)
+        center.setZValue(3)
+        return box, center
+
+    @staticmethod
+    def _validate_rect(rect: Rect) -> None:
+        if not isinstance(rect, Rect):
+            raise TypeError("overlay box must be a Rect")
+        values = (rect.x, rect.y, rect.width, rect.height)
+        if any(type(value) is not int for value in values):
+            raise TypeError("Rect coordinates and dimensions must be integers")
+        if rect.width <= 0 or rect.height <= 0:
+            raise ValueError("Rect width and height must be positive")
 
     @staticmethod
     def _overlay_pen(color: QColor, width: float) -> QPen:
@@ -249,7 +298,8 @@ class ImageView(QGraphicsView):
         return pen
 
     def _remove_match_items(self) -> None:
-        for box, label in self._match_items:
+        for box, label, center in self._match_items:
             self.scene().removeItem(box)
             self.scene().removeItem(label)
+            self.scene().removeItem(center)
         self._match_items.clear()
