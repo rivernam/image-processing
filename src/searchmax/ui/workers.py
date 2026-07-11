@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from searchmax.generator import GenerationSettings, generate_samples
 from searchmax.image_io import read_image
-from searchmax.matcher import match
+from searchmax.matcher import match, match_with_diagnostics
 from searchmax.models import Rect, SearchSettings, TrainModel
 
 
@@ -64,13 +64,11 @@ class SearchWorker(QObject):
                 self.cancelled.emit()
                 return
             try:
-                match_settings = (
-                    replace(self._settings, max_results=100)
-                    if self._diagnostics
-                    else self._settings
-                )
                 image = read_image(path)
-                results = match(self._model, image, match_settings)
+                if self._diagnostics:
+                    results, diagnostics = match_with_diagnostics(self._model, image, self._settings, 100)
+                else:
+                    results = match(self._model, image, self._settings)
             except Exception as error:  # each bad file must not abort the batch
                 self.failed.emit(path, str(error) or type(error).__name__)
             else:
@@ -78,7 +76,7 @@ class SearchWorker(QObject):
                     path, image, results[: self._settings.max_results]
                 )
                 if self._diagnostics:
-                    self.diagnostic_finished.emit(path, results)
+                    self.diagnostic_finished.emit(path, diagnostics)
             self.progress.emit(index, total)
         if self._stop.is_set():
             self.cancelled.emit()

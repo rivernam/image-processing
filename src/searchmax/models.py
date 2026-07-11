@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 
@@ -34,6 +34,13 @@ class TrainModel:
 @dataclass(frozen=True)
 class MatchResult:
     score: float; box: Rect; scale: float; elapsed_ms: float = 0.0
+
+
+class MatchResults(list[MatchResult]):
+    """List-compatible match outcome that retains image search timing when empty."""
+    def __init__(self, values=(), *, elapsed_ms: float = 0.0):
+        super().__init__(values)
+        self.elapsed_ms = elapsed_ms
 
 
 @dataclass(frozen=True)

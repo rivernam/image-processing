@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 import searchmax.matcher as matcher_module
-from searchmax.matcher import _local_peaks, iou, match, non_max_suppression
+from searchmax.matcher import _local_peaks, diagnostic_candidates, iou, match, non_max_suppression
 from searchmax.models import MatchResult, Rect, SearchSettings
 from searchmax.training import train_from_roi
 
@@ -217,3 +217,22 @@ def test_match_captures_elapsed_time_after_final_selection(monkeypatch):
 
     assert events == ["clock", "nms", "clock"]
     assert result.elapsed_ms == pytest.approx(250.0)
+
+
+def test_no_match_preserves_actual_elapsed_time(monkeypatch):
+    _, model = train_pattern()
+    monkeypatch.setattr(matcher_module, "perf_counter", iter([4.0, 4.125]).__next__)
+    results = match(model, np.zeros((80, 100, 3), np.uint8), SearchSettings(min_scale=1, max_scale=1, threshold=1))
+    assert results == []
+    assert results.elapsed_ms == pytest.approx(125.0)
+
+
+def test_diagnostics_are_bounded_pre_nms_candidates():
+    template, model = train_pattern()
+    image = np.full((80, 100, 3), 35, np.uint8)
+    image[20:44, 30:62] = template
+    settings = SearchSettings(min_scale=.98, max_scale=1.02, scale_step=.02, threshold=.8, max_results=1)
+    candidates = diagnostic_candidates(model, image, settings, limit=100)
+    final = match(model, image, settings)
+    assert len(candidates) > len(final) == 1
+    assert candidates == sorted(candidates, key=lambda r: (-r.score, r.box.y, r.box.x, r.scale))

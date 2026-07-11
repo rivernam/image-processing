@@ -51,7 +51,7 @@ def evaluate_sample(
             iou=0.0,
             center_error=None,
             scale_error_percent=None,
-            elapsed_ms=0.0,
+            elapsed_ms=float(getattr(matches, "elapsed_ms", 0.0)),
         )
 
     best = max(matches, key=lambda match: iou(sample.truth_box, match.box))

@@ -22,6 +22,16 @@ from searchmax.persistence import (
 )
 
 
+def test_project_round_trip_optionally_preserves_test_and_background_paths(tmp_path):
+    project = tmp_path / "project" / "settings.json"
+    source = project.parent / "train.png"
+    tests = (project.parent / "tests" / "one.png", tmp_path / "external.png")
+    backgrounds = (project.parent / "background.png",)
+    save_project(project, source, None, SearchSettings(), GenerationSettings(), tests, backgrounds)
+    loaded = load_project(project, include_recent_paths=True)
+    assert loaded[4:] == (tests, backgrounds)
+
+
 def test_project_round_trip_preserves_settings_and_korean_relative_path(
     tmp_path: Path,
 ) -> None:

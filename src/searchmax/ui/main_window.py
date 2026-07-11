@@ -39,7 +39,7 @@ from searchmax.models import (
     SearchSettings,
     TrainModel,
 )
-from searchmax.persistence import export_results_csv, load_project, save_project
+from searchmax.persistence import export_results_csv, load_project, load_samples, save_project, save_samples
 from searchmax.training import train_from_file, train_from_roi
 from searchmax.ui.image_view import ImageView
 from searchmax.ui.workers import GenerationWorker, SearchWorker
@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self._train_source: Path | None = None
         self._test_paths: tuple[Path, ...] = ()
         self._backgrounds: tuple[np.ndarray, ...] = ()
+        self._background_paths: tuple[Path, ...] = ()
         self._generated_samples: list[GeneratedSample] = []
         self._samples_by_path: dict[Path, GeneratedSample] = {}
         self._evaluation_records: list[EvaluationRecord] = []
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         self._generation_thread: QThread | None = None
         self._generation_worker: GenerationWorker | None = None
         self._close_requested = False
+        self._generation_output: Path | None = None
 
         self._build_ui()
         self._build_menu()
@@ -199,8 +201,9 @@ class MainWindow(QMainWindow):
         self.save_project_action = QAction("Save Project", self)
         self.load_project_action = QAction("Load Project", self)
         self.export_csv_action = QAction("Export Evaluation CSV", self)
+        self.load_metadata_action = QAction("Load Sample Metadata", self)
         file_menu.addActions(
-            (self.save_project_action, self.load_project_action, self.export_csv_action)
+            (self.save_project_action, self.load_project_action, self.load_metadata_action, self.export_csv_action)
         )
 
     def _connect_signals(self) -> None:
@@ -217,6 +220,7 @@ class MainWindow(QMainWindow):
         self.show_diagnostics.toggled.connect(self._toggle_diagnostics)
         self.save_project_action.triggered.connect(self.save_project_dialog)
         self.load_project_action.triggered.connect(self.load_project_dialog)
+        self.load_metadata_action.triggered.connect(self.load_metadata_dialog)
         self.export_csv_action.triggered.connect(self.export_csv_dialog)
 
     def search_settings(self) -> SearchSettings:
@@ -319,6 +323,7 @@ class MainWindow(QMainWindow):
         self._set_model(model)
 
     def _set_model(self, model: TrainModel) -> None:
+        self._clear_generated_truth()
         self._model = model
         self._train_source = model.source
         self.train_status.setText(f"Trained: {model.source.name}")
@@ -336,6 +341,7 @@ class MainWindow(QMainWindow):
             self._show_error("Load Test Image Failed", error)
             return
         self._test_paths = paths
+        self._clear_generated_truth()
         self.image_view.set_image(image)
         self.statusBar().showMessage(f"Loaded {len(paths)} test image(s)")
         self._update_actions()
@@ -345,13 +351,17 @@ class MainWindow(QMainWindow):
         if not filenames:
             return
         images: list[np.ndarray] = []
+        valid_paths: list[Path] = []
         failures: list[str] = []
         for filename in filenames:
             try:
-                images.append(read_image(Path(filename)))
+                path = Path(filename)
+                images.append(read_image(path))
+                valid_paths.append(path)
             except Exception as error:
                 failures.append(f"{filename}: {error}")
         self._backgrounds = tuple(images)
+        self._background_paths = tuple(valid_paths)
         if failures:
             self._warn("Some Backgrounds Failed", "\n".join(failures))
         self.statusBar().showMessage(f"Loaded {len(images)} background(s)")
@@ -423,6 +433,8 @@ class MainWindow(QMainWindow):
             self.summary_label.setText(
                 f"{summary.successes}/{summary.total} succeeded "
                 f"({summary.success_rate:.1%}); mean IoU {summary.mean_iou:.3f}; "
+                f"mean center error {summary.mean_center_error:.2f} px; "
+                f"mean scale error {summary.mean_scale_error_percent:.2f}%; "
                 f"mean elapsed {summary.mean_elapsed_ms:.2f} ms"
             )
         self.statusBar().showMessage(self._completion_status("Search", was_cancelled))
@@ -456,6 +468,7 @@ class MainWindow(QMainWindow):
         self._generation_settings = settings
         self._worker_failures.clear()
         worker = GenerationWorker(self._model, self._backgrounds, Path(output), settings)
+        self._generation_output = Path(output)
         thread = QThread(self)
         self._generation_worker, self._generation_thread = worker, thread
         worker.moveToThread(thread)
@@ -485,6 +498,11 @@ class MainWindow(QMainWindow):
         self._set_busy(False)
         if self._generated_samples:
             self._test_paths = tuple(sample.image_path for sample in self._generated_samples)
+            if not was_cancelled and self._generation_output is not None:
+                try:
+                    save_samples(self._generation_output / "samples.json", self._generated_samples)
+                except Exception as error:
+                    self._worker_failed(self._generation_output / "samples.json", str(error))
             self._update_actions()
         if self._worker_failures:
             self.statusBar().showMessage(self._completion_status("Generation", was_cancelled))
@@ -546,6 +564,7 @@ class MainWindow(QMainWindow):
             self.run_button,
             self.save_project_action,
             self.load_project_action,
+            self.load_metadata_action,
             self.export_csv_action,
         ):
             action.setEnabled(not busy)
@@ -581,6 +600,8 @@ class MainWindow(QMainWindow):
                 self._model.roi,
                 self.search_settings(),
                 generation,
+                self._test_paths,
+                self._background_paths,
             )
         except Exception as error:
             self._show_error("Save Project Failed", error)
@@ -595,13 +616,15 @@ class MainWindow(QMainWindow):
         if not filename:
             return
         try:
-            source, roi, search, generation = load_project(Path(filename))
+            source, roi, search, generation, test_paths, background_paths = load_project(Path(filename), include_recent_paths=True)
             image = read_image(source)
             model = (
                 train_from_roi(image, source, roi)
                 if roi is not None
                 else train_from_file(source)
             )
+            test_images = [read_image(item) for item in test_paths]
+            background_images = [read_image(item) for item in background_paths]
         except Exception as error:
             self._show_error("Load Project Failed", error)
             return
@@ -610,7 +633,47 @@ class MainWindow(QMainWindow):
         self._apply_search_settings(search)
         self._apply_generation_settings(generation)
         self._set_model(model)
+        self._test_paths = test_paths
+        self._background_paths = background_paths
+        self._backgrounds = tuple(background_images)
+        if test_images:
+            self.image_view.set_image(test_images[0])
         self.statusBar().showMessage(f"Loaded project: {filename}")
+
+    def _clear_generated_truth(self) -> None:
+        self._generated_samples.clear()
+        self._samples_by_path.clear()
+        self._evaluation_records.clear()
+        self.summary_label.setText("No evaluation results")
+
+    def load_metadata_dialog(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(self, "Load Sample Metadata", filter="JSON (*.json)")
+        if not filename:
+            return
+        try:
+            samples = load_samples(Path(filename))
+        except Exception as error:
+            self._show_error("Load Sample Metadata Failed", error)
+            return
+        valid, failures = [], []
+        for sample in samples:
+            try:
+                read_image(sample.image_path)
+            except Exception as error:
+                failures.append(f"{sample.image_path}: {error}")
+            else:
+                valid.append(sample)
+        if not valid:
+            self._warn("Load Sample Metadata Failed", "\n".join(failures) or "Metadata contains no samples.")
+            return
+        self._generated_samples = valid
+        self._samples_by_path = {sample.image_path: sample for sample in valid}
+        self._test_paths = tuple(sample.image_path for sample in valid)
+        self._update_actions()
+        if failures:
+            self._warn("Some Sample Images Failed", "\n".join(failures))
+        else:
+            self.statusBar().showMessage(f"Loaded {len(valid)} generated sample(s)")
 
     def _apply_search_settings(self, settings: SearchSettings) -> None:
         self.min_scale.setValue(settings.min_scale * 100)

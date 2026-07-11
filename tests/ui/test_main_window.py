@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from searchmax.generator import GenerationSettings
 from searchmax.models import (
+    EvaluationRecord,
     GeneratedSample,
     MatchResult,
     Rect,
@@ -16,6 +17,8 @@ from searchmax.models import (
 )
 from searchmax.ui.main_window import MainWindow
 from searchmax.ui.workers import GenerationWorker, SearchWorker
+from searchmax.persistence import load_samples, save_samples
+from searchmax.image_io import write_image
 
 
 def _model() -> TrainModel:
@@ -265,11 +268,11 @@ def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
         lambda value: np.zeros((30, 40, 3), dtype=np.uint8),
     )
 
-    def fake_match(model, image, settings):
+    def fake_match(model, image, settings, limit):
         seen_settings.append(settings)
-        return candidates
+        return candidates[:1], candidates
 
-    monkeypatch.setattr("searchmax.ui.workers.match", fake_match)
+    monkeypatch.setattr("searchmax.ui.workers.match_with_diagnostics", fake_match)
     worker = SearchWorker(
         (path,), _model(), SearchSettings(max_results=1), diagnostics=True
     )
@@ -281,7 +284,7 @@ def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
 
     worker.run()
 
-    assert seen_settings[0].max_results == 100
+    assert seen_settings[0].max_results == 1
     assert final == candidates[:1]
     assert diagnostic == candidates
 
@@ -433,3 +436,46 @@ def test_terminal_worker_signal_runs_main_window_slot_on_gui_thread(qtbot):
     thread.wait()
 
     assert receiver_threads == [window.thread()]
+
+
+def test_new_model_and_external_tests_invalidate_generated_truth(qtbot, monkeypatch):
+    window = MainWindow(); qtbot.addWidget(window)
+    sample = GeneratedSample(Path("old.png"), Rect(1, 2, 3, 4), TransformRecord(1, 0, 1, 0, 0), 1)
+    window._generated_samples = [sample]; window._samples_by_path = {sample.image_path: sample}
+    window._set_model(_model())
+    assert not window._generated_samples and not window._samples_by_path
+    window._generated_samples = [sample]; window._samples_by_path = {sample.image_path: sample}
+    monkeypatch.setattr("searchmax.ui.main_window.QFileDialog.getOpenFileNames", lambda *a, **k: (["external.png"], ""))
+    monkeypatch.setattr("searchmax.ui.main_window.read_image", lambda p: np.zeros((5, 5, 3), np.uint8))
+    window.load_test_images()
+    assert not window._generated_samples and not window._samples_by_path
+
+
+def test_complete_summary_label_includes_center_and_scale_errors(qtbot):
+    window = MainWindow(); qtbot.addWidget(window)
+    window._evaluation_records = [EvaluationRecord(Path("x"), True, .9, .8, 2.5, 4.0, 10.0)]
+    window._finish_search(False)
+    assert "mean center error 2.50 px" in window.summary_label.text()
+    assert "mean scale error 4.00%" in window.summary_label.text()
+
+
+def test_saved_metadata_loads_and_evaluates_after_restart(qtbot, monkeypatch, tmp_path):
+    image_path = tmp_path / "sample.png"
+    write_image(image_path, np.zeros((30, 40, 3), np.uint8))
+    sample = GeneratedSample(image_path, Rect(1, 2, 12, 10), TransformRecord(1, 0, 1, 0, 0), 1)
+    metadata = tmp_path / "samples.json"; save_samples(metadata, [sample])
+    window = MainWindow(); qtbot.addWidget(window); window._model = _model()
+    monkeypatch.setattr("searchmax.ui.main_window.QFileDialog.getOpenFileName", lambda *a, **k: (str(metadata), ""))
+    window.load_metadata_dialog()
+    window._search_item_finished(image_path, np.zeros((30, 40, 3), np.uint8), [MatchResult(.9, sample.truth_box, 1, 5)])
+    assert window._test_paths == (image_path,)
+    assert len(window._evaluation_records) == 1 and window._evaluation_records[0].success
+
+
+def test_successful_generation_persists_version_one_metadata(qtbot, tmp_path):
+    window = MainWindow(); qtbot.addWidget(window)
+    sample = GeneratedSample(tmp_path / "sample.png", Rect(1, 2, 3, 4), TransformRecord(1, 0, 1, 0, 0), 2)
+    window._generated_samples = [sample]
+    window._generation_output = tmp_path
+    window._finish_generation(False)
+    assert load_samples(tmp_path / "samples.json") == [sample]

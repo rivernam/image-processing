@@ -35,7 +35,7 @@ PowerShell에서 실행 정책 때문에 활성화가 차단되면 활성화 없
    - 검색 설정을 조정하고 `Run Search`를 누릅니다. 진행 중에는 `Cancel`로 남은 작업을 취소할 수 있습니다.
 4. **Results**
    - `Final Results` 행을 선택하면 해당 상자가 이미지에 강조됩니다. 생성 샘플 검색 뒤에는 요약 성공률과 평균 IoU/시간이 표시되며, `File > Export Evaluation CSV`로 평가 기록을 저장할 수 있습니다.
-   - `File > Save Project`와 `Load Project`는 학습 이미지/ROI 및 검색·생성 설정을 저장하고 복원합니다.
+   - `File > Save Project`와 `Load Project`는 학습 이미지/ROI, 검색·생성 설정, 최근 테스트/배경 경로를 저장하고 복원합니다. `Load Sample Metadata`는 재시작 후 생성 샘플과 정답을 복원합니다.
 
 ## 설정 기본값과 의미
 
@@ -56,7 +56,7 @@ PowerShell에서 실행 정책 때문에 활성화가 차단되면 활성화 없
 
 생성의 크기·변형 기본값은 프로젝트 JSON에 함께 저장되지만 현재 UI에서는 Count와 Seed만 직접 변경합니다.
 
-점수는 OpenCV의 정규화 상관 템플릿 매칭 값이며 UI에서는 0–1 범위로 표시됩니다. `Final Results`는 Threshold를 통과한 후보에 NMS(겹침 억제)를 적용한 뒤 점수순으로 `Maximum results`개까지 제한한 결과입니다. `Show diagnostic candidates`의 `Diagnostics` 표는 디버깅을 위해 검색 제한을 최대 100개로 확대한 **NMS 이후 후보**입니다. 즉, threshold 이전의 원시 score-map 전체나 NMS 이전 후보가 아닙니다.
+점수는 OpenCV의 정규화 상관 템플릿 매칭 값이며 UI에서는 0–1 범위로 표시됩니다. `Final Results`는 Threshold를 통과한 후보에 NMS(겹침 억제)를 적용한 뒤 점수순으로 `Maximum results`개까지 제한한 결과입니다. `Show diagnostic candidates`의 `Diagnostics` 표는 동일한 내부 수집 상한을 거친 결정적 점수순 **NMS 이전 상위 100개 후보**입니다. 원시 score-map 전체는 아닙니다.
 
 결과 표의 X와 Y는 검출 상자 왼쪽 위 위치의 이미지 픽셀 좌표이고, Width와 Height는 검출 경계 상자의 픽셀 크기입니다. Scale은 학습 템플릿 크기에 대한 검출 배율입니다. Elapsed ms는 해당 이미지의 전체 배율 탐색, 후보 선택, NMS까지 걸린 검색 시간이며 결과 행별 독립 측정 시간이 아닙니다. 같은 이미지의 결과 행에는 같은 검색 시간이 표시됩니다.
 
@@ -64,7 +64,7 @@ PowerShell에서 실행 정책 때문에 활성화가 차단되면 활성화 없
 
 ## 저장 파일
 
-- 프로젝트는 UTF-8 JSON이며 학습 이미지 경로, ROI, 검색 설정, 생성 설정을 저장합니다. 프로젝트 폴더 안의 학습 이미지는 가능한 경우 프로젝트 파일 기준 상대 경로로 기록되고, 외부 이미지는 절대 경로가 될 수 있습니다. 프로젝트를 옮길 때 상대 경로 이미지도 함께 옮기고, 절대 경로 파일은 같은 위치에 유지해야 합니다. 생성 이미지와 검색 결과 자체는 프로젝트에 포함되지 않습니다.
+- 프로젝트는 UTF-8 JSON이며 학습 이미지 경로, ROI, 검색 설정, 생성 설정, 최근 테스트/배경 경로를 저장합니다. 프로젝트 폴더 안의 경로는 가능한 경우 프로젝트 파일 기준 상대 경로로 기록되고, 외부 파일은 절대 경로가 될 수 있습니다. 프로젝트를 옮길 때 상대 경로 이미지도 함께 옮기고, 절대 경로 파일은 같은 위치에 유지해야 합니다.
 - 생성 샘플 메타데이터 JSON은 프로젝트 JSON과 별도인 스키마 버전 1 파일입니다. 루트에는 `schema_version: 1`과 `samples` 목록이 있고, 각 샘플은 `image_path`, `truth_box`, `transform`, `seed`를 가집니다. `truth_box`는 생성 이미지 안의 정답 상자이고, `transform`에는 `scale`, `brightness`, `contrast`, `blur_kernel`, `noise_sigma`가 들어갑니다. 상대 `image_path`는 메타데이터 JSON 파일의 폴더를 기준으로 해석됩니다.
 - 평가 CSV는 Excel에서 한글 경로를 읽을 수 있도록 UTF-8 BOM으로 저장되며 열은 `image, success, score, iou, center_error, scale_error_percent, elapsed_ms`입니다. CSV 내 이미지 경로는 실행 시 샘플 경로 문자열입니다.
 - 생성 이미지는 `Generate Samples`에서 선택한 폴더에 `sample_0001.png` 형식으로 저장됩니다. 같은 폴더/이름이 있으면 덮어쓸 수 있으므로 필요한 결과는 별도 폴더를 사용하십시오.

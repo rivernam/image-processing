@@ -10,6 +10,7 @@ from searchmax.models import (
     Rect,
     TransformRecord,
 )
+from searchmax.models import MatchResults
 
 
 def _sample() -> GeneratedSample:
@@ -121,3 +122,9 @@ def test_summarize_uses_arithmetic_means_and_handles_empty_input() -> None:
     assert empty.mean_center_error == 0.0
     assert empty.mean_scale_error_percent == 0.0
     assert empty.mean_elapsed_ms == 0.0
+
+
+def test_failed_evaluation_uses_measured_match_outcome_time() -> None:
+    record = evaluate_sample(_sample(), MatchResults(elapsed_ms=37.5), (100, 60))
+    assert not record.success
+    assert record.elapsed_ms == 37.5

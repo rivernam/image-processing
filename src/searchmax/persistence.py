@@ -1,6 +1,8 @@
 import csv
 import json
 import math
+import os
+import tempfile
 from numbers import Integral, Real
 from pathlib import Path
 from typing import Any
@@ -317,8 +319,14 @@ def _transform_from_dict(value: object, field: str) -> TransformRecord:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _read_schema(path: Path, kind: str) -> dict[str, Any]:
@@ -343,6 +351,8 @@ def save_project(
     train_roi: Rect | None,
     search_settings: SearchSettings,
     generation_settings: GenerationSettings,
+    test_image_paths: tuple[Path, ...] = (),
+    background_paths: tuple[Path, ...] = (),
 ) -> None:
     base_dir = path.resolve().parent
     _write_json(
@@ -357,35 +367,42 @@ def save_project(
             "generation_settings": _generation_settings_to_dict(
                 generation_settings
             ),
+            "test_image_paths": [_portable_path(item, base_dir) for item in test_image_paths],
+            "background_paths": [_portable_path(item, base_dir) for item in background_paths],
         },
     )
 
 
 def load_project(
     path: Path,
-) -> tuple[Path, Rect | None, SearchSettings, GenerationSettings]:
+    *, include_recent_paths: bool = False,
+):
     data = _read_schema(path, "project")
     try:
-        _keys(
-            data,
-            {
+        required = {
                 "schema_version",
                 "train",
                 "search_settings",
                 "generation_settings",
-            },
-            "project",
-        )
+            }
+        optional = {"test_image_paths", "background_paths"}
+        if not required <= set(data) or set(data) - required - optional:
+            raise ValueError("project contains invalid fields")
         train = _object(data["train"], "train")
         _keys(train, {"source", "roi"}, "train")
         roi_data = train["roi"]
         roi = None if roi_data is None else _rect_from_dict(roi_data, "train.roi")
-        return (
+        result = (
             _resolved_path(train["source"], path.resolve().parent, "train.source"),
             roi,
             _search_settings_from_dict(data["search_settings"]),
             _generation_settings_from_dict(data["generation_settings"]),
         )
+        recent = []
+        for name in ("test_image_paths", "background_paths"):
+            values = _array(data.get(name, []), name)
+            recent.append(tuple(_resolved_path(value, path.resolve().parent, f"{name}[{i}]") for i, value in enumerate(values)))
+        return result + tuple(recent) if include_recent_paths else result
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"invalid project schema: {error}") from error
 
@@ -449,18 +466,25 @@ def load_samples(path: Path) -> list[GeneratedSample]:
 
 def export_results_csv(path: Path, records: list[EvaluationRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for record in records:
-            writer.writerow(
-                {
-                    "image": str(record.image_path),
-                    "success": record.success,
-                    "score": record.score,
-                    "iou": record.iou,
-                    "center_error": record.center_error,
-                    "scale_error_percent": record.scale_error_percent,
-                    "elapsed_ms": record.elapsed_ms,
-                }
-            )
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        file = os.fdopen(fd, "w", encoding="utf-8-sig", newline="")
+        with file:
+            writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
+            writer.writeheader()
+            for record in records:
+                writer.writerow(
+                    {
+                        "image": str(record.image_path),
+                        "success": record.success,
+                        "score": record.score,
+                        "iou": record.iou,
+                        "center_error": record.center_error,
+                        "scale_error_percent": record.scale_error_percent,
+                        "elapsed_ms": record.elapsed_ms,
+                    }
+                )
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise

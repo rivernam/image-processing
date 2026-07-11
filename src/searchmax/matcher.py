@@ -4,7 +4,7 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from .models import MatchResult, Rect, SearchSettings, TrainModel
+from .models import MatchResult, MatchResults, Rect, SearchSettings, TrainModel
 
 
 MAX_CANDIDATES_PER_SCALE = 1_000
@@ -81,12 +81,11 @@ def _scale_values(settings: SearchSettings) -> list[float]:
     return scales
 
 
-def match(
+def _collect_candidates(
     model: TrainModel,
     search_image: np.ndarray,
     settings: SearchSettings,
 ) -> list[MatchResult]:
-    started = perf_counter()
     candidates: list[MatchResult] = []
     search = (
         search_image
@@ -118,16 +117,25 @@ def match(
                 )
             )
 
-    if not candidates:
-        return []
+    return sorted(candidates, key=lambda r: (-r.score, r.box.y, r.box.x, r.scale))
 
-    selected = non_max_suppression(
-        candidates,
-        settings.nms_iou_threshold,
-        settings.max_results,
-    )
+
+def diagnostic_candidates(model, search_image, settings, limit: int = 100) -> list[MatchResult]:
+    """Return deterministic, bounded candidates before NMS/max_results."""
+    if not 0 <= limit <= 100:
+        raise ValueError("diagnostic limit must be in [0, 100]")
+    return _collect_candidates(model, search_image, settings)[:limit]
+
+
+def match_with_diagnostics(model, search_image, settings, limit: int = 100):
+    started = perf_counter()
+    candidates = _collect_candidates(model, search_image, settings)
+    selected = non_max_suppression(candidates, settings.nms_iou_threshold, settings.max_results)
     elapsed_ms = (perf_counter() - started) * 1000
-    return [
-        replace(result, elapsed_ms=elapsed_ms)
-        for result in selected
-    ]
+    final = MatchResults((replace(item, elapsed_ms=elapsed_ms) for item in selected), elapsed_ms=elapsed_ms)
+    diagnostics = [replace(item, elapsed_ms=elapsed_ms) for item in candidates[:limit]]
+    return final, diagnostics
+
+
+def match(model: TrainModel, search_image: np.ndarray, settings: SearchSettings) -> MatchResults:
+    return match_with_diagnostics(model, search_image, settings, 0)[0]
