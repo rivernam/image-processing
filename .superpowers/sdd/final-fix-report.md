@@ -46,3 +46,34 @@ Coverage added:
 
 - Metadata schema remains version 1 and therefore carries sample truth/path data rather than an embedded template fingerprint. Safety is enforced in application state: every successful retrain and every external test load clears truth/evaluation mappings, while metadata loading rebuilds mappings only for image files that decode successfully.
 - Project loading validates and decodes all restored recent images before committing any UI state; a single missing/invalid project path rejects the load with its concrete path/error. Metadata loading is deliberately per-file: valid samples are restored and concrete failures are reported, while an all-invalid load preserves existing state.
+
+## Final re-review follow-up
+
+Two remaining Important findings were fixed with TDD.
+
+RED command:
+
+`QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ui/test_main_window.py -q`
+
+Result: 3 failed, 22 passed. The failures showed: worker slicing converted empty `MatchResults(elapsed_ms=42.5)` into a plain list and evaluation recorded `0.0`; generation start retained the old evaluation record; metadata replacement retained the old evaluation record.
+
+GREEN focused command:
+
+`QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_matcher.py tests/test_evaluator.py tests/ui/test_main_window.py -q`
+
+Result: 59 passed.
+
+Changes:
+
+- `SearchWorker` now emits the list-compatible matcher outcome unchanged, preserving empty-result elapsed time while `match()` retains configured NMS/max-results. Pre-NMS diagnostics remain a separate signal.
+- Generation start and successful metadata replacement clear evaluation records and reset summary/export state. Metadata replacement performs this reset without clearing the newly loaded samples/truth mapping.
+- Public diagnostic matcher functions now have concrete argument and return annotations.
+
+Fresh final verification:
+
+- `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ui -v`: 37 passed.
+- `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -v`: 150 passed in 6.86s.
+- `.venv/bin/python -m compileall -q src/searchmax tests`: exit 0.
+- `git diff --check`: exit 0.
+
+No new schema concern was introduced; per review direction, template fingerprints were not added.

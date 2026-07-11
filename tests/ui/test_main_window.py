@@ -10,6 +10,7 @@ from searchmax.models import (
     EvaluationRecord,
     GeneratedSample,
     MatchResult,
+    MatchResults,
     Rect,
     SearchSettings,
     TrainModel,
@@ -479,3 +480,46 @@ def test_successful_generation_persists_version_one_metadata(qtbot, tmp_path):
     window._generation_output = tmp_path
     window._finish_generation(False)
     assert load_samples(tmp_path / "samples.json") == [sample]
+
+
+def test_empty_worker_result_preserves_elapsed_through_evaluation_and_summary(
+    qtbot, monkeypatch
+):
+    path = Path("generated.png")
+    sample = GeneratedSample(path, Rect(1, 2, 12, 10), TransformRecord(1, 0, 1, 0, 0), 1)
+    window = MainWindow(); qtbot.addWidget(window); window._model = _model()
+    window._samples_by_path = {path: sample}
+    monkeypatch.setattr("searchmax.ui.workers.read_image", lambda p: np.zeros((30, 40, 3), np.uint8))
+    monkeypatch.setattr("searchmax.ui.workers.match", lambda *a: MatchResults(elapsed_ms=42.5))
+    worker = SearchWorker((path,), window._model, SearchSettings())
+    worker.item_finished.connect(window._search_item_finished)
+    worker.run()
+    window._finish_search(False)
+    assert window._evaluation_records[0].elapsed_ms == 42.5
+    assert "42.50 ms" in window.summary_label.text()
+
+
+def test_generation_start_clears_prior_evaluation_summary_and_export(qtbot, monkeypatch, tmp_path):
+    window = MainWindow(); qtbot.addWidget(window); window._model = _model()
+    window._evaluation_records = [EvaluationRecord(Path("old"), True, .9, 1, 0, 0, 1)]
+    window.summary_label.setText("old summary"); window._update_actions()
+    monkeypatch.setattr("searchmax.ui.main_window.QFileDialog.getExistingDirectory", lambda *a: str(tmp_path))
+    monkeypatch.setattr("searchmax.ui.main_window.QThread.start", lambda self: None)
+    window.generate_samples()
+    assert window._evaluation_records == []
+    assert window.summary_label.text() == "No evaluation results"
+    assert not window.export_csv_action.isEnabled()
+
+
+def test_metadata_replacement_clears_evaluation_without_discarding_new_truth(qtbot, monkeypatch, tmp_path):
+    image = tmp_path / "new.png"; write_image(image, np.zeros((20, 20, 3), np.uint8))
+    sample = GeneratedSample(image, Rect(1, 2, 3, 4), TransformRecord(1, 0, 1, 0, 0), 1)
+    metadata = tmp_path / "samples.json"; save_samples(metadata, [sample])
+    window = MainWindow(); qtbot.addWidget(window); window._evaluation_records = [EvaluationRecord(Path("old"), True, .9, 1, 0, 0, 1)]
+    window.summary_label.setText("old summary")
+    monkeypatch.setattr("searchmax.ui.main_window.QFileDialog.getOpenFileName", lambda *a, **k: (str(metadata), ""))
+    window.load_metadata_dialog()
+    assert window._evaluation_records == []
+    assert window.summary_label.text() == "No evaluation results"
+    assert window._samples_by_path == {image: sample}
+    assert not window.export_csv_action.isEnabled()

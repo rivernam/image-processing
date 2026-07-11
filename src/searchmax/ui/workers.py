@@ -73,7 +73,7 @@ class SearchWorker(QObject):
                 self.failed.emit(path, str(error) or type(error).__name__)
             else:
                 self.item_finished.emit(
-                    path, image, results[: self._settings.max_results]
+                    path, image, results
                 )
                 if self._diagnostics:
                     self.diagnostic_finished.emit(path, diagnostics)

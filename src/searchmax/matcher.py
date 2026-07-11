@@ -120,14 +120,24 @@ def _collect_candidates(
     return sorted(candidates, key=lambda r: (-r.score, r.box.y, r.box.x, r.scale))
 
 
-def diagnostic_candidates(model, search_image, settings, limit: int = 100) -> list[MatchResult]:
+def diagnostic_candidates(
+    model: TrainModel,
+    search_image: np.ndarray,
+    settings: SearchSettings,
+    limit: int = 100,
+) -> list[MatchResult]:
     """Return deterministic, bounded candidates before NMS/max_results."""
     if not 0 <= limit <= 100:
         raise ValueError("diagnostic limit must be in [0, 100]")
     return _collect_candidates(model, search_image, settings)[:limit]
 
 
-def match_with_diagnostics(model, search_image, settings, limit: int = 100):
+def match_with_diagnostics(
+    model: TrainModel,
+    search_image: np.ndarray,
+    settings: SearchSettings,
+    limit: int = 100,
+) -> tuple[MatchResults, list[MatchResult]]:
     started = perf_counter()
     candidates = _collect_candidates(model, search_image, settings)
     selected = non_max_suppression(candidates, settings.nms_iou_threshold, settings.max_results)

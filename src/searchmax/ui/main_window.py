@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
             self._show_error("Invalid Generation Settings", error)
             return
         self._generation_settings = settings
+        self._clear_evaluation_state()
         self._worker_failures.clear()
         worker = GenerationWorker(self._model, self._backgrounds, Path(output), settings)
         self._generation_output = Path(output)
@@ -582,6 +583,7 @@ class MainWindow(QMainWindow):
         )
         self.generate_button.setEnabled(idle and self._model is not None)
         self.train_roi_button.setEnabled(idle and self._train_image is not None)
+        self.export_csv_action.setEnabled(idle and bool(self._evaluation_records))
 
     def save_project_dialog(self) -> None:
         if self._model is None:
@@ -643,8 +645,12 @@ class MainWindow(QMainWindow):
     def _clear_generated_truth(self) -> None:
         self._generated_samples.clear()
         self._samples_by_path.clear()
+        self._clear_evaluation_state()
+
+    def _clear_evaluation_state(self) -> None:
         self._evaluation_records.clear()
         self.summary_label.setText("No evaluation results")
+        self._update_actions()
 
     def load_metadata_dialog(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Load Sample Metadata", filter="JSON (*.json)")
@@ -666,6 +672,7 @@ class MainWindow(QMainWindow):
         if not valid:
             self._warn("Load Sample Metadata Failed", "\n".join(failures) or "Metadata contains no samples.")
             return
+        self._clear_evaluation_state()
         self._generated_samples = valid
         self._samples_by_path = {sample.image_path: sample for sample in valid}
         self._test_paths = tuple(sample.image_path for sample in valid)
