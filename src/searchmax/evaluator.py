@@ -1,4 +1,5 @@
 import math
+from numbers import Integral, Real
 from statistics import fmean
 
 from .matcher import iou
@@ -16,6 +17,32 @@ def evaluate_sample(
     trained_size: tuple[int, int],
     iou_threshold: float = 0.5,
 ) -> EvaluationRecord:
+    if (
+        not isinstance(trained_size, tuple)
+        or len(trained_size) != 2
+        or any(
+            isinstance(dimension, bool)
+            or not isinstance(dimension, Real)
+            or not math.isfinite(float(dimension))
+            or dimension <= 0
+            for dimension in trained_size
+        )
+    ):
+        raise ValueError("trained_size must contain two positive finite numbers")
+    if (
+        isinstance(iou_threshold, bool)
+        or not isinstance(iou_threshold, Real)
+        or not math.isfinite(float(iou_threshold))
+        or not 0 <= iou_threshold <= 1
+    ):
+        raise ValueError("iou_threshold must be a finite number in [0, 1]")
+    if any(
+        isinstance(dimension, bool)
+        or not isinstance(dimension, Integral)
+        or dimension <= 0
+        for dimension in (sample.truth_box.width, sample.truth_box.height)
+    ):
+        raise ValueError("truth box width and height must be positive integers")
     if not matches:
         return EvaluationRecord(
             image_path=sample.image_path,
@@ -28,6 +55,13 @@ def evaluate_sample(
         )
 
     best = max(matches, key=lambda match: iou(sample.truth_box, match.box))
+    if (
+        isinstance(best.scale, bool)
+        or not isinstance(best.scale, Real)
+        or not math.isfinite(float(best.scale))
+        or best.scale <= 0
+    ):
+        raise ValueError("detected scale must be a positive finite number")
     best_iou = iou(sample.truth_box, best.box)
     truth_center = (
         sample.truth_box.x + sample.truth_box.width / 2,
@@ -40,16 +74,12 @@ def evaluate_sample(
     center_error = math.dist(truth_center, detected_center)
 
     trained_width, trained_height = trained_size
-    if trained_width <= 0 or trained_height <= 0:
-        raise ValueError("trained_size must contain two positive dimensions")
     truth_scale = fmean(
         (
             sample.truth_box.width / trained_width,
             sample.truth_box.height / trained_height,
         )
     )
-    if truth_scale <= 0:
-        raise ValueError("truth box must have positive dimensions")
     scale_error_percent = (best.scale / truth_scale - 1) * 100
 
     return EvaluationRecord(

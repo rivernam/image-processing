@@ -1,5 +1,7 @@
 import csv
 import json
+import math
+from numbers import Integral, Real
 from pathlib import Path
 from typing import Any
 
@@ -26,17 +28,88 @@ CSV_COLUMNS = (
 
 
 def _portable_path(path: Path, base_dir: Path) -> str:
+    normalized_path = path.resolve()
+    normalized_base = base_dir.resolve()
     try:
-        return path.relative_to(base_dir).as_posix()
+        return normalized_path.relative_to(normalized_base).as_posix()
     except ValueError:
-        return str(path)
+        return str(normalized_path)
 
 
-def _resolved_path(value: object, base_dir: Path) -> Path:
+def _resolved_path(value: object, base_dir: Path, field: str) -> Path:
     if not isinstance(value, str) or not value:
-        raise ValueError("path must be a non-empty string")
+        raise ValueError(f"{field} must be a non-empty string")
     path = Path(value)
-    return path if path.is_absolute() else base_dir / path
+    if path.is_absolute():
+        return path.resolve()
+    normalized_base = base_dir.resolve()
+    resolved = (normalized_base / path).resolve()
+    try:
+        resolved.relative_to(normalized_base)
+    except ValueError as error:
+        raise ValueError(f"{field} must not escape the JSON directory") from error
+    return resolved
+
+
+def _object(value: object, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _keys(value: dict[str, Any], expected: set[str], field: str) -> None:
+    if set(value) != expected:
+        raise ValueError(f"{field} must contain exactly {sorted(expected)}")
+
+
+def _integer(
+    value: object,
+    field: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise ValueError(f"{field} must be an integer")
+    result = int(value)
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{field} must be at least {minimum}")
+    if maximum is not None and result > maximum:
+        raise ValueError(f"{field} must be at most {maximum}")
+    return result
+
+
+def _number(
+    value: object,
+    field: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    strict_minimum: bool = False,
+) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(f"{field} must be a finite number")
+    result = float(value)
+    if minimum is not None and (
+        result < minimum or (strict_minimum and result == minimum)
+    ):
+        comparison = "greater than" if strict_minimum else "at least"
+        raise ValueError(f"{field} must be {comparison} {minimum}")
+    if maximum is not None and result > maximum:
+        raise ValueError(f"{field} must be at most {maximum}")
+    return result
+
+
+def _array(value: object, field: str, *, length: int | None = None) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be an array")
+    if length is not None and len(value) != length:
+        raise ValueError(f"{field} must contain exactly {length} values")
+    return value
 
 
 def _rect_to_dict(rect: Rect) -> dict[str, int]:
@@ -48,14 +121,14 @@ def _rect_to_dict(rect: Rect) -> dict[str, int]:
     }
 
 
-def _rect_from_dict(value: object) -> Rect:
-    if not isinstance(value, dict):
-        raise ValueError("rectangle must be an object")
+def _rect_from_dict(value: object, field: str) -> Rect:
+    data = _object(value, field)
+    _keys(data, {"x", "y", "width", "height"}, field)
     return Rect(
-        x=value["x"],
-        y=value["y"],
-        width=value["width"],
-        height=value["height"],
+        x=_integer(data["x"], f"{field}.x"),
+        y=_integer(data["y"], f"{field}.y"),
+        width=_integer(data["width"], f"{field}.width", minimum=1),
+        height=_integer(data["height"], f"{field}.height", minimum=1),
     )
 
 
@@ -87,19 +160,158 @@ def _generation_settings_to_dict(
     }
 
 
+def _search_settings_from_dict(value: object) -> SearchSettings:
+    field = "search_settings"
+    data = _object(value, field)
+    _keys(
+        data,
+        {
+            "min_scale",
+            "max_scale",
+            "scale_step",
+            "threshold",
+            "max_results",
+            "nms_iou_threshold",
+            "color_mode",
+        },
+        field,
+    )
+    min_scale = _number(
+        data["min_scale"],
+        f"{field}.min_scale",
+        minimum=0,
+        strict_minimum=True,
+    )
+    max_scale = _number(data["max_scale"], f"{field}.max_scale", minimum=min_scale)
+    color_mode = data["color_mode"]
+    if not isinstance(color_mode, str) or color_mode not in {"color", "gray"}:
+        raise ValueError(f"{field}.color_mode must be 'color' or 'gray'")
+    return SearchSettings(
+        min_scale=min_scale,
+        max_scale=max_scale,
+        scale_step=_number(
+            data["scale_step"],
+            f"{field}.scale_step",
+            minimum=0,
+            strict_minimum=True,
+        ),
+        threshold=_number(
+            data["threshold"], f"{field}.threshold", minimum=0, maximum=1
+        ),
+        max_results=_integer(
+            data["max_results"],
+            f"{field}.max_results",
+            minimum=1,
+            maximum=100,
+        ),
+        nms_iou_threshold=_number(
+            data["nms_iou_threshold"],
+            f"{field}.nms_iou_threshold",
+            minimum=0,
+            maximum=1,
+        ),
+        color_mode=color_mode,
+    )
+
+
+def _number_range(
+    value: object, field: str, *, positive: bool = False
+) -> tuple[float, float]:
+    values = _array(value, field, length=2)
+    lower = _number(
+        values[0],
+        f"{field}[0]",
+        minimum=0 if positive else None,
+        strict_minimum=positive,
+    )
+    upper = _number(values[1], f"{field}[1]")
+    if upper < lower:
+        raise ValueError(f"{field} must be ordered")
+    return lower, upper
+
+
 def _generation_settings_from_dict(value: object) -> GenerationSettings:
-    if not isinstance(value, dict):
-        raise ValueError("generation settings must be an object")
+    field = "generation_settings"
+    data = _object(value, field)
+    _keys(
+        data,
+        {
+            "count",
+            "seed",
+            "output_size",
+            "min_scale",
+            "max_scale",
+            "brightness_range",
+            "contrast_range",
+            "blur_choices",
+            "noise_sigma_range",
+        },
+        field,
+    )
+    output_values = _array(data["output_size"], f"{field}.output_size", length=2)
+    output_size = tuple(
+        _integer(item, f"{field}.output_size[{index}]", minimum=1)
+        for index, item in enumerate(output_values)
+    )
+    min_scale = _number(
+        data["min_scale"],
+        f"{field}.min_scale",
+        minimum=0,
+        strict_minimum=True,
+    )
+    max_scale = _number(data["max_scale"], f"{field}.max_scale", minimum=min_scale)
+    blur_values = _array(data["blur_choices"], f"{field}.blur_choices")
+    if not blur_values:
+        raise ValueError(f"{field}.blur_choices must not be empty")
+    blur_choices = tuple(
+        _integer(item, f"{field}.blur_choices[{index}]", minimum=0)
+        for index, item in enumerate(blur_values)
+    )
+    if any(kernel != 0 and kernel % 2 == 0 for kernel in blur_choices):
+        raise ValueError(f"{field}.blur_choices must contain 0 or odd integers")
+    noise_range = _number_range(data["noise_sigma_range"], f"{field}.noise_sigma_range")
+    if noise_range[0] < 0:
+        raise ValueError(f"{field}.noise_sigma_range must be non-negative")
     return GenerationSettings(
-        count=value["count"],
-        seed=value["seed"],
-        output_size=tuple(value["output_size"]),
-        min_scale=value["min_scale"],
-        max_scale=value["max_scale"],
-        brightness_range=tuple(value["brightness_range"]),
-        contrast_range=tuple(value["contrast_range"]),
-        blur_choices=tuple(value["blur_choices"]),
-        noise_sigma_range=tuple(value["noise_sigma_range"]),
+        count=_integer(data["count"], f"{field}.count", minimum=1),
+        seed=_integer(data["seed"], f"{field}.seed", minimum=0),
+        output_size=output_size,
+        min_scale=min_scale,
+        max_scale=max_scale,
+        brightness_range=_number_range(
+            data["brightness_range"], f"{field}.brightness_range"
+        ),
+        contrast_range=_number_range(
+            data["contrast_range"],
+            f"{field}.contrast_range",
+            positive=True,
+        ),
+        blur_choices=blur_choices,
+        noise_sigma_range=noise_range,
+    )
+
+
+def _transform_from_dict(value: object, field: str) -> TransformRecord:
+    data = _object(value, field)
+    _keys(
+        data,
+        {"scale", "brightness", "contrast", "blur_kernel", "noise_sigma"},
+        field,
+    )
+    blur_kernel = _integer(data["blur_kernel"], f"{field}.blur_kernel", minimum=0)
+    if blur_kernel != 0 and blur_kernel % 2 == 0:
+        raise ValueError(f"{field}.blur_kernel must be 0 or an odd integer")
+    return TransformRecord(
+        scale=_number(data["scale"], f"{field}.scale", minimum=0, strict_minimum=True),
+        brightness=_number(data["brightness"], f"{field}.brightness"),
+        contrast=_number(
+            data["contrast"],
+            f"{field}.contrast",
+            minimum=0,
+            strict_minimum=True,
+        ),
+        blur_kernel=blur_kernel,
+        noise_sigma=_number(data["noise_sigma"], f"{field}.noise_sigma", minimum=0),
     )
 
 
@@ -115,7 +327,10 @@ def _read_schema(path: Path, kind: str) -> dict[str, Any]:
             data = json.load(file)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid {kind} schema: {error}") from error
-    if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
+    if not isinstance(data, dict):
+        raise ValueError(f"invalid {kind} schema: root must be an object")
+    version = data.get("schema_version")
+    if type(version) is not int or version != SCHEMA_VERSION:
         raise ValueError(
             f"invalid {kind} schema: expected schema_version {SCHEMA_VERSION}"
         )
@@ -129,7 +344,7 @@ def save_project(
     search_settings: SearchSettings,
     generation_settings: GenerationSettings,
 ) -> None:
-    base_dir = path.parent
+    base_dir = path.resolve().parent
     _write_json(
         path,
         {
@@ -151,18 +366,24 @@ def load_project(
 ) -> tuple[Path, Rect | None, SearchSettings, GenerationSettings]:
     data = _read_schema(path, "project")
     try:
-        train = data["train"]
-        if not isinstance(train, dict):
-            raise ValueError("train must be an object")
+        _keys(
+            data,
+            {
+                "schema_version",
+                "train",
+                "search_settings",
+                "generation_settings",
+            },
+            "project",
+        )
+        train = _object(data["train"], "train")
+        _keys(train, {"source", "roi"}, "train")
         roi_data = train["roi"]
-        roi = None if roi_data is None else _rect_from_dict(roi_data)
-        search_data = data["search_settings"]
-        if not isinstance(search_data, dict):
-            raise ValueError("search settings must be an object")
+        roi = None if roi_data is None else _rect_from_dict(roi_data, "train.roi")
         return (
-            _resolved_path(train["source"], path.parent),
+            _resolved_path(train["source"], path.resolve().parent, "train.source"),
             roi,
-            SearchSettings(**search_data),
+            _search_settings_from_dict(data["search_settings"]),
             _generation_settings_from_dict(data["generation_settings"]),
         )
     except (KeyError, TypeError, ValueError) as error:
@@ -196,22 +417,29 @@ def save_samples(path: Path, samples: list[GeneratedSample]) -> None:
 def load_samples(path: Path) -> list[GeneratedSample]:
     data = _read_schema(path, "sample")
     try:
+        _keys(data, {"schema_version", "samples"}, "sample")
         values = data["samples"]
         if not isinstance(values, list):
             raise ValueError("samples must be an array")
         samples = []
-        for value in values:
-            if not isinstance(value, dict):
-                raise ValueError("sample must be an object")
-            transform = value["transform"]
-            if not isinstance(transform, dict):
-                raise ValueError("transform must be an object")
+        for index, value in enumerate(values):
+            field = f"samples[{index}]"
+            sample = _object(value, field)
+            _keys(sample, {"image_path", "truth_box", "transform", "seed"}, field)
             samples.append(
                 GeneratedSample(
-                    image_path=_resolved_path(value["image_path"], path.parent),
-                    truth_box=_rect_from_dict(value["truth_box"]),
-                    transform=TransformRecord(**transform),
-                    seed=value["seed"],
+                    image_path=_resolved_path(
+                        sample["image_path"],
+                        path.resolve().parent,
+                        f"{field}.image_path",
+                    ),
+                    truth_box=_rect_from_dict(
+                        sample["truth_box"], f"{field}.truth_box"
+                    ),
+                    transform=_transform_from_dict(
+                        sample["transform"], f"{field}.transform"
+                    ),
+                    seed=_integer(sample["seed"], f"{field}.seed", minimum=0),
                 )
             )
         return samples

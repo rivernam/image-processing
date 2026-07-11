@@ -56,6 +56,48 @@ def test_evaluation_without_matches_uses_empty_values() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "trained_size",
+    [(0, 60), (100, -1), (True, 60), (100, float("inf"))],
+)
+def test_evaluation_rejects_invalid_trained_size(
+    trained_size: tuple[object, object],
+) -> None:
+    with pytest.raises(ValueError, match="trained_size"):
+        evaluate_sample(_sample(), [], trained_size)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, True, float("nan")])
+def test_evaluation_rejects_invalid_iou_threshold(threshold: object) -> None:
+    with pytest.raises(ValueError, match="iou_threshold"):
+        evaluate_sample(_sample(), [], (100, 60), threshold)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("width,height", [(-1, 60), (100, 0)])
+def test_evaluation_rejects_each_invalid_truth_dimension(
+    width: int, height: int
+) -> None:
+    sample = GeneratedSample(
+        Path("x.png"),
+        Rect(50, 40, width, height),
+        TransformRecord(1, 0, 1, 0, 0),
+        1,
+    )
+
+    with pytest.raises(ValueError, match="truth box"):
+        evaluate_sample(sample, [], (100, 60))
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, True, float("inf")])
+def test_evaluation_rejects_invalid_detected_scale(scale: object) -> None:
+    match = MatchResult(
+        0.9, Rect(50, 40, 100, 60), scale, 1.0  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="detected scale"):
+        evaluate_sample(_sample(), [match], (100, 60))
+
+
 def test_summarize_uses_arithmetic_means_and_handles_empty_input() -> None:
     records = [
         EvaluationRecord(Path("a.png"), True, 0.9, 0.8, 2.0, -10.0, 4.0),
