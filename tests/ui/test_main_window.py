@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMessageBox
 
@@ -103,13 +104,16 @@ def test_search_worker_failure_does_not_stop_later_input(monkeypatch, qtbot):
     worker = SearchWorker((first, second), _model(), SearchSettings())
     failures, successes, progress = [], [], []
     worker.failed.connect(lambda path, message: failures.append((path, message)))
-    worker.item_finished.connect(lambda path, matches: successes.append((path, matches)))
+    worker.item_finished.connect(
+        lambda path, pixels, matches: successes.append((path, pixels, matches))
+    )
     worker.progress.connect(lambda current, total: progress.append((current, total)))
 
     worker.run()
 
     assert failures == [(first, "cannot decode")]
     assert successes[0][0] == second
+    assert successes[0][1] is image
     assert len(processed) == 1
     assert progress == [(1, 2), (2, 2)]
 
@@ -128,7 +132,7 @@ def test_search_worker_cancellation_is_checked_between_files(monkeypatch, qtbot)
         return []
 
     monkeypatch.setattr("searchmax.ui.workers.match", fake_match)
-    worker.item_finished.connect(lambda path, matches: completed.append(path))
+    worker.item_finished.connect(lambda path, pixels, matches: completed.append(path))
     worker.cancelled.connect(lambda: cancelled.append(True))
 
     worker.run()
@@ -270,7 +274,7 @@ def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
         (path,), _model(), SearchSettings(max_results=1), diagnostics=True
     )
     final, diagnostic = [], []
-    worker.item_finished.connect(lambda value, results: final.extend(results))
+    worker.item_finished.connect(lambda value, pixels, results: final.extend(results))
     worker.diagnostic_finished.connect(
         lambda value, results: diagnostic.extend(results)
     )
@@ -280,3 +284,152 @@ def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
     assert seen_settings[0].max_results == 100
     assert final == candidates[:1]
     assert diagnostic == candidates
+
+
+def test_search_result_callback_renders_worker_pixels_without_rereading(
+    qtbot, monkeypatch
+):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    image = np.full((8, 9, 3), 17, dtype=np.uint8)
+    shown = []
+    monkeypatch.setattr(window.image_view, "set_image", shown.append)
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.read_image",
+        lambda path: (_ for _ in ()).throw(AssertionError("GUI re-read")),
+    )
+
+    window._search_item_finished(Path("test.png"), image, [])
+
+    assert shown == [image]
+
+
+def test_workers_snapshot_models_backgrounds_and_settings(monkeypatch, tmp_path):
+    color = np.full((4, 5, 3), 3, dtype=np.uint8)
+    gray = np.full((4, 5), 4, dtype=np.uint8)
+    background = np.full((6, 7, 3), 5, dtype=np.uint8)
+    model = TrainModel(color, gray, Path("train.png"), Rect(1, 2, 3, 4))
+    search_settings = SearchSettings(threshold=.81)
+    generation_settings = GenerationSettings(count=1, seed=9)
+    search = SearchWorker((Path("test.png"),), model, search_settings)
+    generation = GenerationWorker(
+        model, (background,), tmp_path, generation_settings
+    )
+
+    color[:] = 30
+    gray[:] = 40
+    background[:] = 50
+    seen = {}
+    monkeypatch.setattr(
+        "searchmax.ui.workers.read_image",
+        lambda path: np.zeros((10, 10, 3), dtype=np.uint8),
+    )
+
+    def fake_match(snapshot, image, settings):
+        seen["search"] = (snapshot, settings)
+        return []
+
+    def fake_generate(snapshot, backgrounds, output_dir, settings):
+        seen["generation"] = (snapshot, backgrounds, settings)
+        path = output_dir / "sample_0001.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return [
+            GeneratedSample(
+                path,
+                Rect(0, 0, 1, 1),
+                TransformRecord(1, 0, 1, 0, 0),
+                9,
+            )
+        ]
+
+    monkeypatch.setattr("searchmax.ui.workers.match", fake_match)
+    monkeypatch.setattr("searchmax.ui.workers.generate_samples", fake_generate)
+    search.run()
+    generation.run()
+
+    search_model, captured_search_settings = seen["search"]
+    generation_model, backgrounds, captured_generation_settings = seen["generation"]
+    assert np.all(search_model.color == 3) and np.all(search_model.gray == 4)
+    assert np.all(generation_model.color == 3) and np.all(backgrounds[0] == 5)
+    assert not search_model.color.flags.writeable
+    assert not search_model.gray.flags.writeable
+    assert not generation_model.color.flags.writeable
+    assert not backgrounds[0].flags.writeable
+    assert search_model is not model and generation_model is not model
+    assert search_model.roi == model.roi and search_model.roi is not model.roi
+    assert captured_search_settings is not search_settings
+    assert captured_generation_settings is not generation_settings
+    assert captured_search_settings == search_settings
+    assert captured_generation_settings == generation_settings
+
+
+def test_search_scale_controls_roundtrip_fractional_percentages(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    loaded = SearchSettings(min_scale=.805, max_scale=1.505, scale_step=.025)
+
+    window._apply_search_settings(loaded)
+
+    assert window.search_settings() == loaded
+
+
+def test_generation_worker_removes_temporary_trees_on_all_outcomes(
+    monkeypatch, tmp_path
+):
+    calls = 0
+
+    def fake_generate(model, backgrounds, output_dir, settings):
+        nonlocal calls
+        calls += 1
+        nested = output_dir / "nested"
+        nested.mkdir(parents=True)
+        (nested / "debris.txt").write_text("debris")
+        if calls == 1:
+            raise ValueError("failure")
+        image_path = output_dir / "sample_0001.png"
+        image_path.touch()
+        if calls == 3:
+            worker.cancel()
+            raise ValueError("cancelled generation")
+        return [
+            GeneratedSample(
+                image_path,
+                Rect(0, 0, 1, 1),
+                TransformRecord(1, 0, 1, 0, 0),
+                calls,
+            )
+        ]
+
+    monkeypatch.setattr("searchmax.ui.workers.generate_samples", fake_generate)
+    worker = GenerationWorker(_model(), (), tmp_path, GenerationSettings(count=3))
+    worker.run()
+
+    assert not list(tmp_path.glob(".searchmax-*"))
+
+
+def test_terminal_worker_signal_runs_main_window_slot_on_gui_thread(qtbot):
+    class Emitter(QObject):
+        terminal = Signal()
+
+        @Slot()
+        def emit_terminal(self):
+            self.terminal.emit()
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    receiver_threads = []
+    window._finish_search = lambda cancelled: receiver_threads.append(
+        QThread.currentThread()
+    )
+    emitter = Emitter()
+    thread = QThread()
+    emitter.moveToThread(thread)
+    emitter.terminal.connect(window._search_finished)
+    thread.started.connect(emitter.emit_terminal)
+    emitter.terminal.connect(thread.quit)
+    thread.start()
+    qtbot.waitUntil(lambda: bool(receiver_threads))
+    thread.wait()
+
+    assert receiver_threads == [window.thread()]

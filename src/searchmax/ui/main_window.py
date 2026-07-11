@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QThread, Qt
+from PySide6.QtCore import QThread, Qt, Slot
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -177,9 +177,11 @@ class MainWindow(QMainWindow):
         return group
 
     @staticmethod
-    def _percent_spin(minimum: int, maximum: int, value: int) -> QSpinBox:
-        spin = QSpinBox()
+    def _percent_spin(minimum: int, maximum: int, value: int) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
         spin.setRange(minimum, maximum)
+        spin.setDecimals(3)
+        spin.setSingleStep(0.1)
         spin.setValue(value)
         return spin
 
@@ -383,8 +385,8 @@ class MainWindow(QMainWindow):
         worker.item_finished.connect(self._search_item_finished)
         worker.diagnostic_finished.connect(self._append_diagnostics)
         worker.failed.connect(self._worker_failed)
-        worker.finished.connect(lambda: self._finish_search(False))
-        worker.cancelled.connect(lambda: self._finish_search(True))
+        worker.finished.connect(self._search_finished)
+        worker.cancelled.connect(self._search_cancelled)
         worker.finished.connect(thread.quit)
         worker.cancelled.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -395,14 +397,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Searching…")
         thread.start()
 
-    def _search_item_finished(self, path: Path, results: list[MatchResult]) -> None:
-        try:
-            image = read_image(Path(path))
-        except Exception as error:
-            self._worker_failed(path, str(error))
-        else:
-            self.image_view.set_image(image)
-            self.show_results(results)
+    @Slot(object, object, object)
+    def _search_item_finished(
+        self, path: Path, image: np.ndarray, results: list[MatchResult]
+    ) -> None:
+        self.image_view.set_image(image)
+        self.show_results(results)
         sample = self._samples_by_path.get(Path(path))
         if sample is not None and self._model is not None:
             trained_size = (self._model.color.shape[1], self._model.color.shape[0])
@@ -426,6 +426,14 @@ class MainWindow(QMainWindow):
                 f"mean elapsed {summary.mean_elapsed_ms:.2f} ms"
             )
         self.statusBar().showMessage(self._completion_status("Search", was_cancelled))
+
+    @Slot()
+    def _search_finished(self) -> None:
+        self._finish_search(False)
+
+    @Slot()
+    def _search_cancelled(self) -> None:
+        self._finish_search(True)
 
     def _clear_search_thread(self) -> None:
         self._search_worker = None
@@ -455,8 +463,8 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._set_progress)
         worker.item_finished.connect(self._generation_item_finished)
         worker.failed.connect(self._worker_failed)
-        worker.finished.connect(lambda: self._finish_generation(False))
-        worker.cancelled.connect(lambda: self._finish_generation(True))
+        worker.finished.connect(self._generation_finished)
+        worker.cancelled.connect(self._generation_cancelled)
         worker.finished.connect(thread.quit)
         worker.cancelled.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -486,6 +494,14 @@ class MainWindow(QMainWindow):
                 if was_cancelled
                 else f"Generated {len(self._generated_samples)} sample(s)"
             )
+
+    @Slot()
+    def _generation_finished(self) -> None:
+        self._finish_generation(False)
+
+    @Slot()
+    def _generation_cancelled(self) -> None:
+        self._finish_generation(True)
 
     def _clear_generation_thread(self) -> None:
         self._generation_worker = None
@@ -597,9 +613,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Loaded project: {filename}")
 
     def _apply_search_settings(self, settings: SearchSettings) -> None:
-        self.min_scale.setValue(round(settings.min_scale * 100))
-        self.max_scale.setValue(round(settings.max_scale * 100))
-        self.scale_step.setValue(round(settings.scale_step * 100))
+        self.min_scale.setValue(settings.min_scale * 100)
+        self.max_scale.setValue(settings.max_scale * 100)
+        self.scale_step.setValue(settings.scale_step * 100)
         self.threshold.setValue(settings.threshold)
         self.max_results.setValue(settings.max_results)
         self.nms_threshold.setValue(settings.nms_iou_threshold)

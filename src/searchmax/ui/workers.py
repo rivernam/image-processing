@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import shutil
 from threading import Event
 
 import numpy as np
@@ -12,14 +13,30 @@ from PySide6.QtCore import QObject, Signal, Slot
 from searchmax.generator import GenerationSettings, generate_samples
 from searchmax.image_io import read_image
 from searchmax.matcher import match
-from searchmax.models import SearchSettings, TrainModel
+from searchmax.models import Rect, SearchSettings, TrainModel
+
+
+def _readonly_copy(array: np.ndarray) -> np.ndarray:
+    snapshot = array.copy()
+    snapshot.setflags(write=False)
+    return snapshot
+
+
+def _snapshot_model(model: TrainModel) -> TrainModel:
+    roi = model.roi
+    return TrainModel(
+        _readonly_copy(model.color),
+        _readonly_copy(model.gray),
+        Path(str(model.source)),
+        None if roi is None else Rect(roi.x, roi.y, roi.width, roi.height),
+    )
 
 
 class SearchWorker(QObject):
     """Decode and match a fixed batch, reporting failures per input file."""
 
     progress = Signal(int, int)
-    item_finished = Signal(object, object)
+    item_finished = Signal(object, object, object)
     diagnostic_finished = Signal(object, object)
     failed = Signal(object, str)
     finished = Signal()
@@ -34,8 +51,8 @@ class SearchWorker(QObject):
     ) -> None:
         super().__init__()
         self._paths = tuple(Path(path) for path in paths)
-        self._model = model
-        self._settings = settings
+        self._model = _snapshot_model(model)
+        self._settings = replace(settings)
         self._diagnostics = diagnostics
         self._stop = Event()
 
@@ -52,12 +69,13 @@ class SearchWorker(QObject):
                     if self._diagnostics
                     else self._settings
                 )
-                results = match(self._model, read_image(path), match_settings)
+                image = read_image(path)
+                results = match(self._model, image, match_settings)
             except Exception as error:  # each bad file must not abort the batch
                 self.failed.emit(path, str(error) or type(error).__name__)
             else:
                 self.item_finished.emit(
-                    path, results[: self._settings.max_results]
+                    path, image, results[: self._settings.max_results]
                 )
                 if self._diagnostics:
                     self.diagnostic_finished.emit(path, results)
@@ -89,10 +107,12 @@ class GenerationWorker(QObject):
         settings: GenerationSettings,
     ) -> None:
         super().__init__()
-        self._model = model
-        self._backgrounds = tuple(background.copy() for background in backgrounds)
+        self._model = _snapshot_model(model)
+        self._backgrounds = tuple(
+            _readonly_copy(background) for background in backgrounds
+        )
         self._output_dir = Path(output_dir)
-        self._settings = settings
+        self._settings = replace(settings)
         self._stop = Event()
 
     @Slot()
@@ -118,10 +138,11 @@ class GenerationWorker(QObject):
                 )
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 sample.image_path.replace(destination)
-                temporary.rmdir()
                 self.item_finished.emit(replace(sample, image_path=destination))
             except Exception as error:
                 self.failed.emit(destination, str(error) or type(error).__name__)
+            finally:
+                shutil.rmtree(temporary, ignore_errors=True)
             self.progress.emit(index, total)
         if self._stop.is_set():
             self.cancelled.emit()
