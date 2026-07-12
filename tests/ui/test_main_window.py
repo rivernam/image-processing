@@ -117,6 +117,23 @@ def test_max_results_enforces_documented_range(qtbot):
     assert window.max_results.value() == 100
 
 
+def test_loading_train_image_enables_roi_training(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    image = np.zeros((30, 40, 3), dtype=np.uint8)
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: ("train.png", ""),
+    )
+    monkeypatch.setattr("searchmax.ui.main_window.read_image", lambda path: image)
+
+    assert not window.train_roi_button.isEnabled()
+
+    window.load_train_image()
+
+    assert window.train_roi_button.isEnabled()
+
+
 def test_search_worker_failure_does_not_stop_later_input(monkeypatch, qtbot):
     first, second = Path("broken.png"), Path("valid.png")
     image = np.zeros((30, 40, 3), dtype=np.uint8)

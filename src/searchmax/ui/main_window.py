@@ -325,6 +325,7 @@ class MainWindow(QMainWindow):
         self._train_image = image
         self.image_view.set_image(image)
         self.roi_checkbox.setChecked(True)
+        self._update_actions()
         self.statusBar().showMessage(f"Loaded train image: {filename}")
 
     def train_selected_roi(self) -> None:
