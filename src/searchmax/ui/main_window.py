@@ -185,11 +185,23 @@ class MainWindow(QMainWindow):
         self.hue_max = QDoubleSpinBox()
         self.hue_max.setRange(-180.0, 180.0)
         self.hue_max.setValue(60.0)
+        self.saturation_min = QDoubleSpinBox()
+        self.saturation_min.setRange(0.0, 2.0)
+        self.saturation_min.setDecimals(2)
+        self.saturation_min.setSingleStep(0.1)
+        self.saturation_min.setValue(0.0)
+        self.saturation_max = QDoubleSpinBox()
+        self.saturation_max.setRange(0.0, 2.0)
+        self.saturation_max.setDecimals(2)
+        self.saturation_max.setSingleStep(0.1)
+        self.saturation_max.setValue(1.0)
         synthetic_layout.addRow(self.load_background_button)
         synthetic_layout.addRow("Count", self.generation_count)
         synthetic_layout.addRow("Seed", self.generation_seed)
         synthetic_layout.addRow("Hue min (°)", self.hue_min)
         synthetic_layout.addRow("Hue max (°)", self.hue_max)
+        synthetic_layout.addRow("Saturation min", self.saturation_min)
+        synthetic_layout.addRow("Saturation max", self.saturation_max)
         synthetic_layout.addRow(self.generate_button)
 
         self.prepare_stack.addWidget(self.existing_images_panel)
@@ -335,6 +347,9 @@ class MainWindow(QMainWindow):
             blur_choices=previous.blur_choices,
             noise_sigma_range=previous.noise_sigma_range,
             hue_shift_range=(self.hue_min.value(), self.hue_max.value()),
+            saturation_scale_range=(
+                self.saturation_min.value(), self.saturation_max.value()
+            ),
         )
 
     def show_results(self, results: list[MatchResult]) -> None:
@@ -789,6 +804,8 @@ class MainWindow(QMainWindow):
         self.generation_seed.setValue(settings.seed)
         self.hue_min.setValue(settings.hue_shift_range[0])
         self.hue_max.setValue(settings.hue_shift_range[1])
+        self.saturation_min.setValue(settings.saturation_scale_range[0])
+        self.saturation_max.setValue(settings.saturation_scale_range[1])
 
     def export_csv_dialog(self) -> None:
         if not self._evaluation_records:

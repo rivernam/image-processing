@@ -335,6 +335,7 @@ def test_generation_settings_preserve_loaded_non_search_ranges(qtbot):
         blur_choices=(0, 3, 5),
         noise_sigma_range=(0, 2),
         hue_shift_range=(-30, 45),
+        saturation_scale_range=(0.2, 1.2),
     )
 
     window._apply_generation_settings(loaded)
@@ -342,6 +343,8 @@ def test_generation_settings_preserve_loaded_non_search_ranges(qtbot):
     assert window.generation_settings() == loaded
     assert window.hue_min.value() == -30
     assert window.hue_max.value() == 45
+    assert window.saturation_min.value() == 0.2
+    assert window.saturation_max.value() == 1.2
 
 
 def test_generation_hue_controls_default_to_medium_variation(qtbot):
@@ -351,6 +354,9 @@ def test_generation_hue_controls_default_to_medium_variation(qtbot):
     assert window.hue_min.value() == -60
     assert window.hue_max.value() == 60
     assert window.generation_settings().hue_shift_range == (-60, 60)
+    assert window.saturation_min.value() == 0
+    assert window.saturation_max.value() == 1
+    assert window.generation_settings().saturation_scale_range == (0, 1)
 
 
 def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
