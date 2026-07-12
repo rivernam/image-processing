@@ -126,23 +126,32 @@ class MainWindow(QMainWindow):
 
     def _build_test_group(self) -> QGroupBox:
         group = QGroupBox("Test / Generator")
-        layout = QFormLayout(group)
-        self.load_test_button = QPushButton("Load Test Images")
-        self.load_background_button = QPushButton("Load Backgrounds")
-        self.generate_button = QPushButton("Generate Samples")
+        layout = QVBoxLayout(group)
+
+        self.existing_images_group = QGroupBox("Existing Images")
+        existing_layout = QVBoxLayout(self.existing_images_group)
+        self.load_test_button = QPushButton("Open Images to Search")
         self.run_button = QPushButton("Run Search")
+        existing_layout.addWidget(self.load_test_button)
+        existing_layout.addWidget(self.run_button)
+
+        self.synthetic_images_group = QGroupBox("Synthetic Test Images")
+        synthetic_layout = QFormLayout(self.synthetic_images_group)
+        self.load_background_button = QPushButton("Add Backgrounds for Generation")
+        self.generate_button = QPushButton("Generate Test Images")
         self.generation_count = QSpinBox()
         self.generation_count.setRange(1, 10_000)
         self.generation_count.setValue(20)
         self.generation_seed = QSpinBox()
         self.generation_seed.setRange(0, 2_147_483_647)
         self.generation_seed.setValue(1234)
-        layout.addRow(self.load_test_button)
-        layout.addRow(self.load_background_button)
-        layout.addRow("Count", self.generation_count)
-        layout.addRow("Seed", self.generation_seed)
-        layout.addRow(self.generate_button)
-        layout.addRow(self.run_button)
+        synthetic_layout.addRow(self.load_background_button)
+        synthetic_layout.addRow("Count", self.generation_count)
+        synthetic_layout.addRow("Seed", self.generation_seed)
+        synthetic_layout.addRow(self.generate_button)
+
+        layout.addWidget(self.existing_images_group)
+        layout.addWidget(self.synthetic_images_group)
         return group
 
     def _build_search_group(self) -> QGroupBox:

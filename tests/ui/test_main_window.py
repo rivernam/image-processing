@@ -45,6 +45,17 @@ def test_main_window_defaults_and_result_rows(qtbot):
     assert window.results_table.item(0, 7).text() == "8.50"
 
 
+def test_test_image_workflows_are_visually_separated(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.existing_images_group.title() == "Existing Images"
+    assert window.synthetic_images_group.title() == "Synthetic Test Images"
+    assert window.load_test_button.text() == "Open Images to Search"
+    assert window.load_background_button.text() == "Add Backgrounds for Generation"
+    assert window.generate_button.text() == "Generate Test Images"
+
+
 def test_invalid_run_shows_concrete_message_without_clearing_results(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
