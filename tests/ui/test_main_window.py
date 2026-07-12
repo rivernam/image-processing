@@ -55,6 +55,16 @@ def test_main_layout_prioritizes_image_workspace(qtbot):
     assert window.workspace_panel.sizePolicy().horizontalStretch() == 1
 
 
+def test_control_panel_scrolls_instead_of_forcing_tall_window(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.test_source.setCurrentText("Synthetic Test Images")
+
+    assert window.control_panel.widgetResizable()
+    assert window.control_panel.widget() is window.control_content
+    assert window.minimumSizeHint().height() <= 720
+
+
 def test_results_start_collapsed_and_toggle_without_clearing_rows(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)

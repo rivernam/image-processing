@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QDoubleSpinBox,
@@ -85,12 +88,22 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(root)
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.control_panel = QWidget()
-        controls_layout = QVBoxLayout(self.control_panel)
+        self.control_panel = QScrollArea()
+        self.control_panel.setWidgetResizable(True)
+        self.control_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.control_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self.control_content = QWidget()
+        self.control_content.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        controls_layout = QVBoxLayout(self.control_content)
         controls_layout.addWidget(self._build_train_group())
         controls_layout.addWidget(self._build_test_group())
         controls_layout.addWidget(self._build_search_group())
         controls_layout.addStretch(1)
+        self.control_panel.setWidget(self.control_content)
 
         self.workspace_panel = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_panel)
@@ -176,6 +189,7 @@ class MainWindow(QMainWindow):
 
         self.synthetic_images_panel = QWidget()
         synthetic_layout = QFormLayout(self.synthetic_images_panel)
+        synthetic_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.load_background_button = QPushButton("Add Backgrounds for Generation")
         self.generate_button = QPushButton("Generate Test Images")
         self.generation_count = QSpinBox()
@@ -231,6 +245,7 @@ class MainWindow(QMainWindow):
     def _build_search_group(self) -> QGroupBox:
         group = QGroupBox("Search Settings")
         layout = QFormLayout(group)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.min_scale = self._percent_spin(1, 1000, 80)
         self.max_scale = self._percent_spin(1, 1000, 150)
         self.scale_step = self._percent_spin(1, 100, 2)
