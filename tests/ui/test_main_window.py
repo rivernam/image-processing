@@ -295,11 +295,23 @@ def test_generation_settings_preserve_loaded_non_search_ranges(qtbot):
         contrast_range=(.8, 1.2),
         blur_choices=(0, 3, 5),
         noise_sigma_range=(0, 2),
+        hue_shift_range=(-30, 45),
     )
 
     window._apply_generation_settings(loaded)
 
     assert window.generation_settings() == loaded
+    assert window.hue_min.value() == -30
+    assert window.hue_max.value() == 45
+
+
+def test_generation_hue_controls_default_to_medium_variation(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.hue_min.value() == -60
+    assert window.hue_max.value() == 60
+    assert window.generation_settings().hue_shift_range == (-60, 60)
 
 
 def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):

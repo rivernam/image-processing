@@ -154,9 +154,17 @@ class MainWindow(QMainWindow):
         self.generation_seed = QSpinBox()
         self.generation_seed.setRange(0, 2_147_483_647)
         self.generation_seed.setValue(1234)
+        self.hue_min = QDoubleSpinBox()
+        self.hue_min.setRange(-180.0, 180.0)
+        self.hue_min.setValue(-60.0)
+        self.hue_max = QDoubleSpinBox()
+        self.hue_max.setRange(-180.0, 180.0)
+        self.hue_max.setValue(60.0)
         synthetic_layout.addRow(self.load_background_button)
         synthetic_layout.addRow("Count", self.generation_count)
         synthetic_layout.addRow("Seed", self.generation_seed)
+        synthetic_layout.addRow("Hue min (°)", self.hue_min)
+        synthetic_layout.addRow("Hue max (°)", self.hue_max)
         synthetic_layout.addRow(self.generate_button)
 
         self.prepare_stack.addWidget(self.existing_images_panel)
@@ -279,6 +287,7 @@ class MainWindow(QMainWindow):
             contrast_range=previous.contrast_range,
             blur_choices=previous.blur_choices,
             noise_sigma_range=previous.noise_sigma_range,
+            hue_shift_range=(self.hue_min.value(), self.hue_max.value()),
         )
 
     def show_results(self, results: list[MatchResult]) -> None:
@@ -731,6 +740,8 @@ class MainWindow(QMainWindow):
         self._generation_settings = settings
         self.generation_count.setValue(settings.count)
         self.generation_seed.setValue(settings.seed)
+        self.hue_min.setValue(settings.hue_shift_range[0])
+        self.hue_max.setValue(settings.hue_shift_range[1])
 
     def export_csv_dialog(self) -> None:
         if not self._evaluation_records:
