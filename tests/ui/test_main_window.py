@@ -45,15 +45,32 @@ def test_main_window_defaults_and_result_rows(qtbot):
     assert window.results_table.item(0, 7).text() == "8.50"
 
 
-def test_test_image_workflows_are_visually_separated(qtbot):
+def test_test_workflow_has_numbered_steps_and_shared_search_action(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    assert window.existing_images_group.title() == "Existing Images"
-    assert window.synthetic_images_group.title() == "Synthetic Test Images"
-    assert window.load_test_button.text() == "Open Images to Search"
-    assert window.load_background_button.text() == "Add Backgrounds for Generation"
-    assert window.generate_button.text() == "Generate Test Images"
+    assert window.test_source_group.title() == "1. Choose Test Source"
+    assert window.prepare_images_group.title() == "2. Prepare Test Images"
+    assert window.run_search_group.title() == "3. Run Search"
+    assert window.run_button.parent() is window.run_search_group
+
+
+def test_test_source_switches_preparation_panel_without_clearing_state(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    paths = (Path("existing.png"),)
+    backgrounds = (np.zeros((4, 4, 3), dtype=np.uint8),)
+    window._test_paths = paths
+    window._backgrounds = backgrounds
+
+    assert window.test_source.currentText() == "Existing Images"
+    assert window.prepare_stack.currentWidget() is window.existing_images_panel
+
+    window.test_source.setCurrentText("Synthetic Test Images")
+
+    assert window.prepare_stack.currentWidget() is window.synthetic_images_panel
+    assert window._test_paths is paths
+    assert window._backgrounds is backgrounds
 
 
 def test_invalid_run_shows_concrete_message_without_clearing_results(qtbot, monkeypatch):

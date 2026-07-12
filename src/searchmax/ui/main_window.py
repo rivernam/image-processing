@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QStackedWidget,
     QDoubleSpinBox,
     QSplitter,
     QTabWidget,
@@ -128,15 +129,23 @@ class MainWindow(QMainWindow):
         group = QGroupBox("Test / Generator")
         layout = QVBoxLayout(group)
 
-        self.existing_images_group = QGroupBox("Existing Images")
-        existing_layout = QVBoxLayout(self.existing_images_group)
-        self.load_test_button = QPushButton("Open Images to Search")
-        self.run_button = QPushButton("Run Search")
-        existing_layout.addWidget(self.load_test_button)
-        existing_layout.addWidget(self.run_button)
+        self.test_source_group = QGroupBox("1. Choose Test Source")
+        source_layout = QVBoxLayout(self.test_source_group)
+        self.test_source = QComboBox()
+        self.test_source.addItems(("Existing Images", "Synthetic Test Images"))
+        source_layout.addWidget(self.test_source)
 
-        self.synthetic_images_group = QGroupBox("Synthetic Test Images")
-        synthetic_layout = QFormLayout(self.synthetic_images_group)
+        self.prepare_images_group = QGroupBox("2. Prepare Test Images")
+        prepare_layout = QVBoxLayout(self.prepare_images_group)
+        self.prepare_stack = QStackedWidget()
+
+        self.existing_images_panel = QWidget()
+        existing_layout = QVBoxLayout(self.existing_images_panel)
+        self.load_test_button = QPushButton("Open Images to Search")
+        existing_layout.addWidget(self.load_test_button)
+
+        self.synthetic_images_panel = QWidget()
+        synthetic_layout = QFormLayout(self.synthetic_images_panel)
         self.load_background_button = QPushButton("Add Backgrounds for Generation")
         self.generate_button = QPushButton("Generate Test Images")
         self.generation_count = QSpinBox()
@@ -150,9 +159,24 @@ class MainWindow(QMainWindow):
         synthetic_layout.addRow("Seed", self.generation_seed)
         synthetic_layout.addRow(self.generate_button)
 
-        layout.addWidget(self.existing_images_group)
-        layout.addWidget(self.synthetic_images_group)
+        self.prepare_stack.addWidget(self.existing_images_panel)
+        self.prepare_stack.addWidget(self.synthetic_images_panel)
+        prepare_layout.addWidget(self.prepare_stack)
+
+        self.run_search_group = QGroupBox("3. Run Search")
+        run_layout = QVBoxLayout(self.run_search_group)
+        self.run_button = QPushButton("Run Search")
+        run_layout.addWidget(self.run_button)
+
+        self.test_source.currentIndexChanged.connect(self._show_test_source)
+        layout.addWidget(self.test_source_group)
+        layout.addWidget(self.prepare_images_group)
+        layout.addWidget(self.run_search_group)
         return group
+
+    @Slot(int)
+    def _show_test_source(self, index: int) -> None:
+        self.prepare_stack.setCurrentIndex(index)
 
     def _build_search_group(self) -> QGroupBox:
         group = QGroupBox("Search Settings")
