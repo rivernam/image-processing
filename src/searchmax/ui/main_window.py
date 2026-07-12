@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -80,22 +81,34 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
-        layout = QVBoxLayout(root)
-        controls = QSplitter(Qt.Orientation.Horizontal)
-        controls.addWidget(self._build_train_group())
-        controls.addWidget(self._build_test_group())
-        controls.addWidget(self._build_search_group())
-        layout.addWidget(controls)
+        layout = QHBoxLayout(root)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self.control_panel = QWidget()
+        controls_layout = QVBoxLayout(self.control_panel)
+        controls_layout.addWidget(self._build_train_group())
+        controls_layout.addWidget(self._build_test_group())
+        controls_layout.addWidget(self._build_search_group())
+        controls_layout.addStretch(1)
+
+        self.workspace_panel = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace_panel)
 
         self.image_view = ImageView()
-        layout.addWidget(self.image_view, 1)
+        workspace_layout.addWidget(self.image_view, 1)
 
         self.results_table = self._table(self.RESULT_HEADERS)
         self.diagnostics_table = self._table(self.DIAGNOSTIC_HEADERS)
         self.result_tabs = QTabWidget()
         self.result_tabs.addTab(self.results_table, "Final Results")
         self.result_tabs.addTab(self.diagnostics_table, "Diagnostics")
-        layout.addWidget(self.result_tabs)
+        self.result_tabs.hide()
+        self.results_toggle = QToolButton()
+        self.results_toggle.setText("Show Results")
+        self.results_toggle.setCheckable(True)
+        self.results_toggle.toggled.connect(self._toggle_results)
+        workspace_layout.addWidget(self.results_toggle)
+        workspace_layout.addWidget(self.result_tabs)
 
         footer = QHBoxLayout()
         self.summary_label = QLabel("No evaluation results")
@@ -107,8 +120,20 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.summary_label, 1)
         footer.addWidget(self.progress_bar)
         footer.addWidget(self.cancel_button)
-        layout.addLayout(footer)
+        workspace_layout.addLayout(footer)
+
+        self.main_splitter.addWidget(self.control_panel)
+        self.main_splitter.addWidget(self.workspace_panel)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes((320, 960))
+        layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
+
+    @Slot(bool)
+    def _toggle_results(self, expanded: bool) -> None:
+        self.result_tabs.setVisible(expanded)
+        self.results_toggle.setText("Hide Results" if expanded else "Show Results")
 
     def _build_train_group(self) -> QGroupBox:
         group = QGroupBox("Train")
@@ -208,7 +233,22 @@ class MainWindow(QMainWindow):
         self.color_mode = QComboBox()
         self.color_mode.addItem("Color", "color")
         self.color_mode.addItem("Grayscale", "gray")
-        self.show_diagnostics = QCheckBox("Show diagnostic candidates")
+        self.advanced_search_toggle = QToolButton()
+        self.advanced_search_toggle.setText("Advanced Search Settings")
+        self.advanced_search_toggle.setCheckable(True)
+        self.advanced_search_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_search_toggle.toggled.connect(self._toggle_advanced_search)
+        self.advanced_search_panel = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_search_panel)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.show_diagnostics = QCheckBox("Show pre-filter candidates")
+        self.diagnostics_help = QLabel(
+            "Shows up to 100 matches before overlap removal and result limiting."
+        )
+        self.diagnostics_help.setWordWrap(True)
+        advanced_layout.addWidget(self.show_diagnostics)
+        advanced_layout.addWidget(self.diagnostics_help)
+        self.advanced_search_panel.hide()
         layout.addRow("Min scale (%)", self.min_scale)
         layout.addRow("Max scale (%)", self.max_scale)
         layout.addRow("Step (%)", self.scale_step)
@@ -216,8 +256,15 @@ class MainWindow(QMainWindow):
         layout.addRow("Maximum results", self.max_results)
         layout.addRow("NMS IoU", self.nms_threshold)
         layout.addRow("Mode", self.color_mode)
-        layout.addRow(self.show_diagnostics)
+        layout.addRow(self.advanced_search_toggle)
+        layout.addRow(self.advanced_search_panel)
         return group
+
+    @Slot(bool)
+    def _toggle_advanced_search(self, expanded: bool) -> None:
+        self.advanced_search_panel.setVisible(expanded)
+        arrow = Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        self.advanced_search_toggle.setArrowType(arrow)
 
     @staticmethod
     def _percent_spin(minimum: int, maximum: int, value: int) -> QDoubleSpinBox:

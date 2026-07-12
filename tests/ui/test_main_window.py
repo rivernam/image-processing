@@ -45,6 +45,45 @@ def test_main_window_defaults_and_result_rows(qtbot):
     assert window.results_table.item(0, 7).text() == "8.50"
 
 
+def test_main_layout_prioritizes_image_workspace(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.main_splitter.widget(0) is window.control_panel
+    assert window.main_splitter.widget(1) is window.workspace_panel
+    assert window.control_panel.sizePolicy().horizontalStretch() == 0
+    assert window.workspace_panel.sizePolicy().horizontalStretch() == 1
+
+
+def test_results_start_collapsed_and_toggle_without_clearing_rows(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.results_table.setRowCount(1)
+
+    assert window.result_tabs.isHidden()
+    assert window.results_toggle.text() == "Show Results"
+
+    window.results_toggle.click()
+    assert not window.result_tabs.isHidden()
+    assert window.results_toggle.text() == "Hide Results"
+
+    window.results_toggle.click()
+    assert window.result_tabs.isHidden()
+    assert window.results_table.rowCount() == 1
+
+
+def test_diagnostic_candidates_are_in_collapsed_advanced_settings(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.show_diagnostics.text() == "Show pre-filter candidates"
+    assert window.advanced_search_panel.isHidden()
+    assert "before overlap removal" in window.diagnostics_help.text()
+
+    window.advanced_search_toggle.click()
+    assert not window.advanced_search_panel.isHidden()
+
+
 def test_test_workflow_has_numbered_steps_and_shared_search_action(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
