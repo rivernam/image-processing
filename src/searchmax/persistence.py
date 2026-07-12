@@ -505,7 +505,7 @@ def export_results_csv(path: Path, records: list[EvaluationRecord]) -> None:
             for record in records:
                 writer.writerow(
                     {
-                        "image": str(record.image_path),
+                        "image": record.image_path.as_posix(),
                         "success": record.success,
                         "score": record.score,
                         "iou": record.iou,
