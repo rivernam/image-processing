@@ -44,6 +44,7 @@ from searchmax.models import (
 from searchmax.persistence import export_results_csv, load_project, load_samples, save_project, save_samples
 from searchmax.training import train_from_file, train_from_roi
 from searchmax.ui.image_view import ImageView
+from searchmax.ui.template_preview import TemplatePreview
 from searchmax.ui.workers import GenerationWorker, SearchWorker
 
 
@@ -143,11 +144,15 @@ class MainWindow(QMainWindow):
         self.train_file_button = QPushButton("Train from File")
         self.roi_checkbox = QCheckBox("Select ROI")
         self.train_status = QLabel("No template")
+        self.template_preview_label = QLabel("ROI Template")
+        self.template_preview = TemplatePreview()
         layout.addWidget(self.load_train_image_button)
         layout.addWidget(self.roi_checkbox)
         layout.addWidget(self.train_roi_button)
         layout.addWidget(self.train_file_button)
         layout.addWidget(self.train_status)
+        layout.addWidget(self.template_preview_label)
+        layout.addWidget(self.template_preview, 0, Qt.AlignmentFlag.AlignHCenter)
         return group
 
     def _build_test_group(self) -> QGroupBox:
@@ -311,6 +316,7 @@ class MainWindow(QMainWindow):
         self.roi_checkbox.toggled.connect(self.image_view.set_roi_enabled)
         self.train_roi_button.clicked.connect(self.train_selected_roi)
         self.train_file_button.clicked.connect(self.train_direct_file)
+        self.template_preview.clicked.connect(self._show_template_preview)
         self.load_test_button.clicked.connect(self.load_test_images)
         self.load_background_button.clicked.connect(self.load_backgrounds)
         self.generate_button.clicked.connect(self.generate_samples)
@@ -431,9 +437,15 @@ class MainWindow(QMainWindow):
         self._clear_generated_truth()
         self._model = model
         self._train_source = model.source
+        self.template_preview.set_image(model.color)
         self.train_status.setText(f"Trained: {model.source.name}")
         self.statusBar().showMessage(f"Template trained from {model.source}")
         self._update_actions()
+
+    @Slot()
+    def _show_template_preview(self) -> None:
+        if self._model is not None:
+            self.image_view.set_image(self._model.color)
 
     def load_test_images(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(self, "Load Test Images")

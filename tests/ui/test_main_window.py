@@ -173,6 +173,48 @@ def test_loading_train_image_enables_roi_training(qtbot, monkeypatch):
     assert window.train_roi_button.isEnabled()
 
 
+def test_trained_model_populates_persistent_roi_preview(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+
+    window._set_model(model)
+
+    assert np.array_equal(window.template_preview.image, model.color)
+
+
+def test_loading_test_image_does_not_clear_roi_preview(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+    window._set_model(model)
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.QFileDialog.getOpenFileNames",
+        lambda *args, **kwargs: (["test.png"], ""),
+    )
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.read_image",
+        lambda path: np.zeros((30, 40, 3), np.uint8),
+    )
+
+    window.load_test_images()
+
+    assert np.array_equal(window.template_preview.image, model.color)
+
+
+def test_clicking_roi_preview_displays_template_in_main_view(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+    shown = []
+    monkeypatch.setattr(window.image_view, "set_image", shown.append)
+    window._set_model(model)
+
+    window.template_preview.clicked.emit()
+
+    assert np.array_equal(shown[-1], model.color)
+
+
 def test_search_worker_failure_does_not_stop_later_input(monkeypatch, qtbot):
     first, second = Path("broken.png"), Path("valid.png")
     image = np.zeros((30, 40, 3), dtype=np.uint8)
