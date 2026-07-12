@@ -160,6 +160,7 @@ def _generation_settings_to_dict(
         "blur_choices": list(settings.blur_choices),
         "noise_sigma_range": list(settings.noise_sigma_range),
         "hue_shift_range": list(settings.hue_shift_range),
+        "saturation_scale_range": list(settings.saturation_scale_range),
     }
 
 
@@ -247,7 +248,11 @@ def _generation_settings_from_dict(value: object) -> GenerationSettings:
             "blur_choices",
             "noise_sigma_range",
         }
-    _keys(data, required | ({"hue_shift_range"} if "hue_shift_range" in data else set()), field)
+    optional = {
+        name for name in ("hue_shift_range", "saturation_scale_range")
+        if name in data
+    }
+    _keys(data, required | optional, field)
     output_values = _array(data["output_size"], f"{field}.output_size", length=2)
     output_size = tuple(
         _integer(item, f"{field}.output_size[{index}]", minimum=1)
@@ -293,13 +298,24 @@ def _generation_settings_from_dict(value: object) -> GenerationSettings:
             if "hue_shift_range" in data
             else (0.0, 0.0)
         ),
+        saturation_scale_range=(
+            _number_range(
+                data["saturation_scale_range"],
+                f"{field}.saturation_scale_range",
+            )
+            if "saturation_scale_range" in data
+            else (1.0, 1.0)
+        ),
     )
 
 
 def _transform_from_dict(value: object, field: str) -> TransformRecord:
     data = _object(value, field)
     required = {"scale", "brightness", "contrast", "blur_kernel", "noise_sigma"}
-    _keys(data, required | ({"hue_shift_degrees"} if "hue_shift_degrees" in data else set()), field)
+    optional = {
+        name for name in ("hue_shift_degrees", "saturation_scale") if name in data
+    }
+    _keys(data, required | optional, field)
     blur_kernel = _integer(data["blur_kernel"], f"{field}.blur_kernel", minimum=0)
     if blur_kernel != 0 and blur_kernel % 2 == 0:
         raise ValueError(f"{field}.blur_kernel must be 0 or an odd integer")
@@ -319,6 +335,12 @@ def _transform_from_dict(value: object, field: str) -> TransformRecord:
             f"{field}.hue_shift_degrees",
             minimum=-180,
             maximum=180,
+        ),
+        saturation_scale=_number(
+            data.get("saturation_scale", 1.0),
+            f"{field}.saturation_scale",
+            minimum=0,
+            maximum=2,
         ),
     )
 
@@ -429,6 +451,7 @@ def save_samples(path: Path, samples: list[GeneratedSample]) -> None:
                         "blur_kernel": sample.transform.blur_kernel,
                         "noise_sigma": sample.transform.noise_sigma,
                         "hue_shift_degrees": sample.transform.hue_shift_degrees,
+                        "saturation_scale": sample.transform.saturation_scale,
                     },
                     "seed": sample.seed,
                 }
