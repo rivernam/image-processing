@@ -41,6 +41,7 @@ class GenerationSettings:
     contrast_range: tuple[float, float] = (0.9, 1.1)
     blur_choices: tuple[int, ...] = (0, 3)
     noise_sigma_range: tuple[float, float] = (0, 3)
+    hue_shift_range: tuple[float, float] = (-60.0, 60.0)
 
     def __post_init__(self) -> None:
         if (
@@ -94,6 +95,9 @@ class GenerationSettings:
         _validate_range("noise_sigma_range", self.noise_sigma_range)
         if self.noise_sigma_range[0] < 0:
             raise ValueError("noise_sigma_range must be non-negative")
+        _validate_range("hue_shift_range", self.hue_shift_range)
+        if self.hue_shift_range[0] < -180 or self.hue_shift_range[1] > 180:
+            raise ValueError("hue_shift_range must be within [-180, 180]")
 
 
 def _fallback_background(
@@ -134,6 +138,15 @@ def _validate_backgrounds(backgrounds: list[np.ndarray]) -> None:
             raise ValueError(f"background {index} must be a non-empty BGR image")
 
 
+def _shift_hue(image: np.ndarray, degrees: float) -> np.ndarray:
+    if degrees == 0:
+        return image.copy()
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hue = (hsv[:, :, 0].astype(np.float32) + degrees / 2.0) % 180.0
+    hsv[:, :, 0] = hue.astype(np.uint8)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
 def generate_samples(
     model: TrainModel,
     backgrounds: list[np.ndarray],
@@ -170,6 +183,8 @@ def generate_samples(
         resized = cv2.resize(model.color, (scaled_width, scaled_height))
         x = int(rng.integers(0, output_width - scaled_width + 1))
         y = int(rng.integers(0, output_height - scaled_height + 1))
+        hue_shift = float(rng.uniform(*settings.hue_shift_range))
+        resized = _shift_hue(resized, hue_shift)
         image[y : y + scaled_height, x : x + scaled_width] = resized
 
         brightness = float(rng.uniform(*settings.brightness_range))
@@ -190,7 +205,7 @@ def generate_samples(
                 path,
                 Rect(x, y, scaled_width, scaled_height),
                 TransformRecord(
-                    scale, brightness, contrast, blur_kernel, noise_sigma
+                    scale, brightness, contrast, blur_kernel, noise_sigma, hue_shift
                 ),
                 settings.seed,
             )

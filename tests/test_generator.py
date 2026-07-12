@@ -53,6 +53,9 @@ def test_settings_reject_invalid_output_size():
         ({"blur_choices": (0, 2)}, "blur_choices"),
         ({"noise_sigma_range": (-1, 2)}, "noise_sigma_range"),
         ({"noise_sigma_range": (2, 1)}, "noise_sigma_range"),
+        ({"hue_shift_range": (2, -2)}, "hue_shift_range"),
+        ({"hue_shift_range": (-181, 0)}, "hue_shift_range"),
+        ({"hue_shift_range": (0, 181)}, "hue_shift_range"),
     ],
 )
 def test_settings_reject_invalid_values(kwargs, message):
@@ -149,6 +152,7 @@ def test_supplied_background_and_recorded_full_image_transform_are_exact(tmp_pat
         contrast_range=(1.1, 1.1),
         blur_choices=(3,),
         noise_sigma_range=(0, 0),
+        hue_shift_range=(0, 0),
     )
 
     [sample] = generate_samples(
@@ -208,3 +212,34 @@ def test_seeded_noise_is_applied_outside_the_truth_box(tmp_path):
     box = clean_sample.truth_box
     outside[box.y : box.y + box.height, box.x : box.x + box.width] = False
     assert np.any(clean[outside] != noisy[outside])
+
+
+@pytest.mark.parametrize("hue_shift", [0, 60])
+def test_hue_shift_changes_only_the_roi_object(tmp_path, hue_shift):
+    template = np.full((8, 10, 3), (20, 120, 240), np.uint8)
+    template[:, 5:] = (30, 160, 80)
+    model = train_from_roi(template, Path("template.png"), Rect(0, 0, 10, 8))
+    background = np.full((20, 24, 3), 90, np.uint8)
+    settings = GenerationSettings(
+        count=1,
+        seed=4,
+        output_size=(24, 20),
+        min_scale=1,
+        max_scale=1,
+        brightness_range=(0, 0),
+        contrast_range=(1, 1),
+        blur_choices=(0,),
+        noise_sigma_range=(0, 0),
+        hue_shift_range=(hue_shift, hue_shift),
+    )
+
+    [sample] = generate_samples(model, [background], tmp_path, settings)
+
+    image = read_image(sample.image_path)
+    box = sample.truth_box
+    outside = np.ones(image.shape[:2], dtype=bool)
+    outside[box.y : box.y + box.height, box.x : box.x + box.width] = False
+    assert np.array_equal(image[outside], background[outside])
+    roi = image[box.y : box.y + box.height, box.x : box.x + box.width]
+    assert np.array_equal(roi, template) is (hue_shift == 0)
+    assert sample.transform.hue_shift_degrees == hue_shift
