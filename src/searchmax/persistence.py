@@ -159,6 +159,8 @@ def _generation_settings_to_dict(
         "contrast_range": list(settings.contrast_range),
         "blur_choices": list(settings.blur_choices),
         "noise_sigma_range": list(settings.noise_sigma_range),
+        "hue_shift_range": list(settings.hue_shift_range),
+        "saturation_scale_range": list(settings.saturation_scale_range),
     }
 
 
@@ -235,9 +237,7 @@ def _number_range(
 def _generation_settings_from_dict(value: object) -> GenerationSettings:
     field = "generation_settings"
     data = _object(value, field)
-    _keys(
-        data,
-        {
+    required = {
             "count",
             "seed",
             "output_size",
@@ -247,9 +247,12 @@ def _generation_settings_from_dict(value: object) -> GenerationSettings:
             "contrast_range",
             "blur_choices",
             "noise_sigma_range",
-        },
-        field,
-    )
+        }
+    optional = {
+        name for name in ("hue_shift_range", "saturation_scale_range")
+        if name in data
+    }
+    _keys(data, required | optional, field)
     output_values = _array(data["output_size"], f"{field}.output_size", length=2)
     output_size = tuple(
         _integer(item, f"{field}.output_size[{index}]", minimum=1)
@@ -290,16 +293,29 @@ def _generation_settings_from_dict(value: object) -> GenerationSettings:
         ),
         blur_choices=blur_choices,
         noise_sigma_range=noise_range,
+        hue_shift_range=(
+            _number_range(data["hue_shift_range"], f"{field}.hue_shift_range")
+            if "hue_shift_range" in data
+            else (0.0, 0.0)
+        ),
+        saturation_scale_range=(
+            _number_range(
+                data["saturation_scale_range"],
+                f"{field}.saturation_scale_range",
+            )
+            if "saturation_scale_range" in data
+            else (1.0, 1.0)
+        ),
     )
 
 
 def _transform_from_dict(value: object, field: str) -> TransformRecord:
     data = _object(value, field)
-    _keys(
-        data,
-        {"scale", "brightness", "contrast", "blur_kernel", "noise_sigma"},
-        field,
-    )
+    required = {"scale", "brightness", "contrast", "blur_kernel", "noise_sigma"}
+    optional = {
+        name for name in ("hue_shift_degrees", "saturation_scale") if name in data
+    }
+    _keys(data, required | optional, field)
     blur_kernel = _integer(data["blur_kernel"], f"{field}.blur_kernel", minimum=0)
     if blur_kernel != 0 and blur_kernel % 2 == 0:
         raise ValueError(f"{field}.blur_kernel must be 0 or an odd integer")
@@ -314,6 +330,18 @@ def _transform_from_dict(value: object, field: str) -> TransformRecord:
         ),
         blur_kernel=blur_kernel,
         noise_sigma=_number(data["noise_sigma"], f"{field}.noise_sigma", minimum=0),
+        hue_shift_degrees=_number(
+            data.get("hue_shift_degrees", 0.0),
+            f"{field}.hue_shift_degrees",
+            minimum=-180,
+            maximum=180,
+        ),
+        saturation_scale=_number(
+            data.get("saturation_scale", 1.0),
+            f"{field}.saturation_scale",
+            minimum=0,
+            maximum=2,
+        ),
     )
 
 
@@ -422,6 +450,8 @@ def save_samples(path: Path, samples: list[GeneratedSample]) -> None:
                         "contrast": sample.transform.contrast,
                         "blur_kernel": sample.transform.blur_kernel,
                         "noise_sigma": sample.transform.noise_sigma,
+                        "hue_shift_degrees": sample.transform.hue_shift_degrees,
+                        "saturation_scale": sample.transform.saturation_scale,
                     },
                     "seed": sample.seed,
                 }
@@ -475,7 +505,7 @@ def export_results_csv(path: Path, records: list[EvaluationRecord]) -> None:
             for record in records:
                 writer.writerow(
                     {
-                        "image": str(record.image_path),
+                        "image": record.image_path.as_posix(),
                         "success": record.success,
                         "score": record.score,
                         "iou": record.iou,

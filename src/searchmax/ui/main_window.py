@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,12 +20,16 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QDoubleSpinBox,
     QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -42,6 +47,7 @@ from searchmax.models import (
 from searchmax.persistence import export_results_csv, load_project, load_samples, save_project, save_samples
 from searchmax.training import train_from_file, train_from_roi
 from searchmax.ui.image_view import ImageView
+from searchmax.ui.template_preview import TemplatePreview
 from searchmax.ui.workers import GenerationWorker, SearchWorker
 
 
@@ -79,22 +85,44 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
-        layout = QVBoxLayout(root)
-        controls = QSplitter(Qt.Orientation.Horizontal)
-        controls.addWidget(self._build_train_group())
-        controls.addWidget(self._build_test_group())
-        controls.addWidget(self._build_search_group())
-        layout.addWidget(controls)
+        layout = QHBoxLayout(root)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self.control_panel = QScrollArea()
+        self.control_panel.setWidgetResizable(True)
+        self.control_panel.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.control_panel.setFrameShape(QFrame.Shape.NoFrame)
+        self.control_content = QWidget()
+        self.control_content.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        controls_layout = QVBoxLayout(self.control_content)
+        controls_layout.addWidget(self._build_train_group())
+        controls_layout.addWidget(self._build_test_group())
+        controls_layout.addWidget(self._build_search_group())
+        controls_layout.addStretch(1)
+        self.control_panel.setWidget(self.control_content)
+
+        self.workspace_panel = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace_panel)
 
         self.image_view = ImageView()
-        layout.addWidget(self.image_view, 1)
+        workspace_layout.addWidget(self.image_view, 1)
 
         self.results_table = self._table(self.RESULT_HEADERS)
         self.diagnostics_table = self._table(self.DIAGNOSTIC_HEADERS)
         self.result_tabs = QTabWidget()
         self.result_tabs.addTab(self.results_table, "Final Results")
         self.result_tabs.addTab(self.diagnostics_table, "Diagnostics")
-        layout.addWidget(self.result_tabs)
+        self.result_tabs.hide()
+        self.results_toggle = QToolButton()
+        self.results_toggle.setText("Show Results")
+        self.results_toggle.setCheckable(True)
+        self.results_toggle.toggled.connect(self._toggle_results)
+        workspace_layout.addWidget(self.results_toggle)
+        workspace_layout.addWidget(self.result_tabs)
 
         footer = QHBoxLayout()
         self.summary_label = QLabel("No evaluation results")
@@ -106,8 +134,20 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.summary_label, 1)
         footer.addWidget(self.progress_bar)
         footer.addWidget(self.cancel_button)
-        layout.addLayout(footer)
+        workspace_layout.addLayout(footer)
+
+        self.main_splitter.addWidget(self.control_panel)
+        self.main_splitter.addWidget(self.workspace_panel)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes((320, 960))
+        layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
+
+    @Slot(bool)
+    def _toggle_results(self, expanded: bool) -> None:
+        self.result_tabs.setVisible(expanded)
+        self.results_toggle.setText("Hide Results" if expanded else "Show Results")
 
     def _build_train_group(self) -> QGroupBox:
         group = QGroupBox("Train")
@@ -117,26 +157,39 @@ class MainWindow(QMainWindow):
         self.train_file_button = QPushButton("Train from File")
         self.roi_checkbox = QCheckBox("Select ROI")
         self.train_status = QLabel("No template")
+        self.template_preview_label = QLabel("ROI Template")
+        self.template_preview = TemplatePreview()
         layout.addWidget(self.load_train_image_button)
         layout.addWidget(self.roi_checkbox)
         layout.addWidget(self.train_roi_button)
         layout.addWidget(self.train_file_button)
         layout.addWidget(self.train_status)
+        layout.addWidget(self.template_preview_label)
+        layout.addWidget(self.template_preview, 0, Qt.AlignmentFlag.AlignHCenter)
         return group
 
     def _build_test_group(self) -> QGroupBox:
         group = QGroupBox("Test / Generator")
         layout = QVBoxLayout(group)
 
-        self.existing_images_group = QGroupBox("Existing Images")
-        existing_layout = QVBoxLayout(self.existing_images_group)
-        self.load_test_button = QPushButton("Open Images to Search")
-        self.run_button = QPushButton("Run Search")
-        existing_layout.addWidget(self.load_test_button)
-        existing_layout.addWidget(self.run_button)
+        self.test_source_group = QGroupBox("1. Choose Test Source")
+        source_layout = QVBoxLayout(self.test_source_group)
+        self.test_source = QComboBox()
+        self.test_source.addItems(("Existing Images", "Synthetic Test Images"))
+        source_layout.addWidget(self.test_source)
 
-        self.synthetic_images_group = QGroupBox("Synthetic Test Images")
-        synthetic_layout = QFormLayout(self.synthetic_images_group)
+        self.prepare_images_group = QGroupBox("2. Prepare Test Images")
+        prepare_layout = QVBoxLayout(self.prepare_images_group)
+        self.prepare_stack = QStackedWidget()
+
+        self.existing_images_panel = QWidget()
+        existing_layout = QVBoxLayout(self.existing_images_panel)
+        self.load_test_button = QPushButton("Open Images to Search")
+        existing_layout.addWidget(self.load_test_button)
+
+        self.synthetic_images_panel = QWidget()
+        synthetic_layout = QFormLayout(self.synthetic_images_panel)
+        synthetic_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.load_background_button = QPushButton("Add Backgrounds for Generation")
         self.generate_button = QPushButton("Generate Test Images")
         self.generation_count = QSpinBox()
@@ -145,18 +198,54 @@ class MainWindow(QMainWindow):
         self.generation_seed = QSpinBox()
         self.generation_seed.setRange(0, 2_147_483_647)
         self.generation_seed.setValue(1234)
+        self.hue_min = QDoubleSpinBox()
+        self.hue_min.setRange(-180.0, 180.0)
+        self.hue_min.setValue(-60.0)
+        self.hue_max = QDoubleSpinBox()
+        self.hue_max.setRange(-180.0, 180.0)
+        self.hue_max.setValue(60.0)
+        self.saturation_min = QDoubleSpinBox()
+        self.saturation_min.setRange(0.0, 2.0)
+        self.saturation_min.setDecimals(2)
+        self.saturation_min.setSingleStep(0.1)
+        self.saturation_min.setValue(0.0)
+        self.saturation_max = QDoubleSpinBox()
+        self.saturation_max.setRange(0.0, 2.0)
+        self.saturation_max.setDecimals(2)
+        self.saturation_max.setSingleStep(0.1)
+        self.saturation_max.setValue(1.0)
         synthetic_layout.addRow(self.load_background_button)
         synthetic_layout.addRow("Count", self.generation_count)
         synthetic_layout.addRow("Seed", self.generation_seed)
+        synthetic_layout.addRow("Hue min (°)", self.hue_min)
+        synthetic_layout.addRow("Hue max (°)", self.hue_max)
+        synthetic_layout.addRow("Saturation min", self.saturation_min)
+        synthetic_layout.addRow("Saturation max", self.saturation_max)
         synthetic_layout.addRow(self.generate_button)
 
-        layout.addWidget(self.existing_images_group)
-        layout.addWidget(self.synthetic_images_group)
+        self.prepare_stack.addWidget(self.existing_images_panel)
+        self.prepare_stack.addWidget(self.synthetic_images_panel)
+        prepare_layout.addWidget(self.prepare_stack)
+
+        self.run_search_group = QGroupBox("3. Run Search")
+        run_layout = QVBoxLayout(self.run_search_group)
+        self.run_button = QPushButton("Run Search")
+        run_layout.addWidget(self.run_button)
+
+        self.test_source.currentIndexChanged.connect(self._show_test_source)
+        layout.addWidget(self.test_source_group)
+        layout.addWidget(self.prepare_images_group)
+        layout.addWidget(self.run_search_group)
         return group
+
+    @Slot(int)
+    def _show_test_source(self, index: int) -> None:
+        self.prepare_stack.setCurrentIndex(index)
 
     def _build_search_group(self) -> QGroupBox:
         group = QGroupBox("Search Settings")
         layout = QFormLayout(group)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.min_scale = self._percent_spin(1, 1000, 80)
         self.max_scale = self._percent_spin(1, 1000, 150)
         self.scale_step = self._percent_spin(1, 100, 2)
@@ -176,7 +265,22 @@ class MainWindow(QMainWindow):
         self.color_mode = QComboBox()
         self.color_mode.addItem("Color", "color")
         self.color_mode.addItem("Grayscale", "gray")
-        self.show_diagnostics = QCheckBox("Show diagnostic candidates")
+        self.advanced_search_toggle = QToolButton()
+        self.advanced_search_toggle.setText("Advanced Search Settings")
+        self.advanced_search_toggle.setCheckable(True)
+        self.advanced_search_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_search_toggle.toggled.connect(self._toggle_advanced_search)
+        self.advanced_search_panel = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_search_panel)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        self.show_diagnostics = QCheckBox("Show pre-filter candidates")
+        self.diagnostics_help = QLabel(
+            "Shows up to 100 matches before overlap removal and result limiting."
+        )
+        self.diagnostics_help.setWordWrap(True)
+        advanced_layout.addWidget(self.show_diagnostics)
+        advanced_layout.addWidget(self.diagnostics_help)
+        self.advanced_search_panel.hide()
         layout.addRow("Min scale (%)", self.min_scale)
         layout.addRow("Max scale (%)", self.max_scale)
         layout.addRow("Step (%)", self.scale_step)
@@ -184,8 +288,15 @@ class MainWindow(QMainWindow):
         layout.addRow("Maximum results", self.max_results)
         layout.addRow("NMS IoU", self.nms_threshold)
         layout.addRow("Mode", self.color_mode)
-        layout.addRow(self.show_diagnostics)
+        layout.addRow(self.advanced_search_toggle)
+        layout.addRow(self.advanced_search_panel)
         return group
+
+    @Slot(bool)
+    def _toggle_advanced_search(self, expanded: bool) -> None:
+        self.advanced_search_panel.setVisible(expanded)
+        arrow = Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        self.advanced_search_toggle.setArrowType(arrow)
 
     @staticmethod
     def _percent_spin(minimum: int, maximum: int, value: int) -> QDoubleSpinBox:
@@ -220,6 +331,7 @@ class MainWindow(QMainWindow):
         self.roi_checkbox.toggled.connect(self.image_view.set_roi_enabled)
         self.train_roi_button.clicked.connect(self.train_selected_roi)
         self.train_file_button.clicked.connect(self.train_direct_file)
+        self.template_preview.clicked.connect(self._show_template_preview)
         self.load_test_button.clicked.connect(self.load_test_images)
         self.load_background_button.clicked.connect(self.load_backgrounds)
         self.generate_button.clicked.connect(self.generate_samples)
@@ -255,6 +367,10 @@ class MainWindow(QMainWindow):
             contrast_range=previous.contrast_range,
             blur_choices=previous.blur_choices,
             noise_sigma_range=previous.noise_sigma_range,
+            hue_shift_range=(self.hue_min.value(), self.hue_max.value()),
+            saturation_scale_range=(
+                self.saturation_min.value(), self.saturation_max.value()
+            ),
         )
 
     def show_results(self, results: list[MatchResult]) -> None:
@@ -301,6 +417,7 @@ class MainWindow(QMainWindow):
         self._train_image = image
         self.image_view.set_image(image)
         self.roi_checkbox.setChecked(True)
+        self._update_actions()
         self.statusBar().showMessage(f"Loaded train image: {filename}")
 
     def train_selected_roi(self) -> None:
@@ -335,9 +452,15 @@ class MainWindow(QMainWindow):
         self._clear_generated_truth()
         self._model = model
         self._train_source = model.source
+        self.template_preview.set_image(model.color)
         self.train_status.setText(f"Trained: {model.source.name}")
         self.statusBar().showMessage(f"Template trained from {model.source}")
         self._update_actions()
+
+    @Slot()
+    def _show_template_preview(self) -> None:
+        if self._model is not None:
+            self.image_view.set_image(self._model.color)
 
     def load_test_images(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(self, "Load Test Images")
@@ -706,6 +829,10 @@ class MainWindow(QMainWindow):
         self._generation_settings = settings
         self.generation_count.setValue(settings.count)
         self.generation_seed.setValue(settings.seed)
+        self.hue_min.setValue(settings.hue_shift_range[0])
+        self.hue_max.setValue(settings.hue_shift_range[1])
+        self.saturation_min.setValue(settings.saturation_scale_range[0])
+        self.saturation_max.setValue(settings.saturation_scale_range[1])
 
     def export_csv_dialog(self) -> None:
         if not self._evaluation_records:

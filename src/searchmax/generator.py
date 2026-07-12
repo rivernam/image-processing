@@ -41,6 +41,8 @@ class GenerationSettings:
     contrast_range: tuple[float, float] = (0.9, 1.1)
     blur_choices: tuple[int, ...] = (0, 3)
     noise_sigma_range: tuple[float, float] = (0, 3)
+    hue_shift_range: tuple[float, float] = (-60.0, 60.0)
+    saturation_scale_range: tuple[float, float] = (0.0, 1.0)
 
     def __post_init__(self) -> None:
         if (
@@ -94,6 +96,12 @@ class GenerationSettings:
         _validate_range("noise_sigma_range", self.noise_sigma_range)
         if self.noise_sigma_range[0] < 0:
             raise ValueError("noise_sigma_range must be non-negative")
+        _validate_range("hue_shift_range", self.hue_shift_range)
+        if self.hue_shift_range[0] < -180 or self.hue_shift_range[1] > 180:
+            raise ValueError("hue_shift_range must be within [-180, 180]")
+        _validate_range("saturation_scale_range", self.saturation_scale_range)
+        if self.saturation_scale_range[0] < 0 or self.saturation_scale_range[1] > 2:
+            raise ValueError("saturation_scale_range must be within [0, 2]")
 
 
 def _fallback_background(
@@ -134,6 +142,19 @@ def _validate_backgrounds(backgrounds: list[np.ndarray]) -> None:
             raise ValueError(f"background {index} must be a non-empty BGR image")
 
 
+def _transform_color(
+    image: np.ndarray, hue_degrees: float, saturation_scale: float
+) -> np.ndarray:
+    if hue_degrees == 0 and saturation_scale == 1:
+        return image.copy()
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hue = (hsv[:, :, 0].astype(np.float32) + hue_degrees / 2.0) % 180.0
+    hsv[:, :, 0] = hue.astype(np.uint8)
+    saturation = hsv[:, :, 1].astype(np.float32) * saturation_scale
+    hsv[:, :, 1] = np.clip(saturation, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
 def generate_samples(
     model: TrainModel,
     backgrounds: list[np.ndarray],
@@ -170,6 +191,9 @@ def generate_samples(
         resized = cv2.resize(model.color, (scaled_width, scaled_height))
         x = int(rng.integers(0, output_width - scaled_width + 1))
         y = int(rng.integers(0, output_height - scaled_height + 1))
+        hue_shift = float(rng.uniform(*settings.hue_shift_range))
+        saturation_scale = float(rng.uniform(*settings.saturation_scale_range))
+        resized = _transform_color(resized, hue_shift, saturation_scale)
         image[y : y + scaled_height, x : x + scaled_width] = resized
 
         brightness = float(rng.uniform(*settings.brightness_range))
@@ -190,7 +214,8 @@ def generate_samples(
                 path,
                 Rect(x, y, scaled_width, scaled_height),
                 TransformRecord(
-                    scale, brightness, contrast, blur_kernel, noise_sigma
+                    scale, brightness, contrast, blur_kernel, noise_sigma,
+                    hue_shift, saturation_scale
                 ),
                 settings.seed,
             )

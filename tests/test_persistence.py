@@ -57,6 +57,8 @@ def test_project_round_trip_preserves_settings_and_korean_relative_path(
         contrast_range=(0.8, 1.2),
         blur_choices=(0, 3, 5),
         noise_sigma_range=(0, 2),
+        hue_shift_range=(-30, 45),
+        saturation_scale_range=(0.2, 1.2),
     )
 
     save_project(project_path, source, roi, search, generation)
@@ -279,7 +281,7 @@ def test_samples_round_trip_preserves_korean_paths(tmp_path: Path) -> None:
         GeneratedSample(
             path.parent / "이미지" / "첫째.png",
             Rect(1, 2, 30, 40),
-            TransformRecord(1.25, -3.0, 0.9, 3, 1.5),
+            TransformRecord(1.25, -3.0, 0.9, 3, 1.5, 35.0, 0.4),
             42,
         )
     ]
@@ -310,6 +312,18 @@ def _valid_sample_payload() -> dict[str, object]:
             }
         ],
     }
+
+
+def test_legacy_payloads_default_to_zero_hue_shift(tmp_path: Path) -> None:
+    project = tmp_path / "project.json"
+    project.write_text(json.dumps(_valid_project_payload()), encoding="utf-8")
+    samples = tmp_path / "samples.json"
+    samples.write_text(json.dumps(_valid_sample_payload()), encoding="utf-8")
+
+    assert load_project(project)[3].hue_shift_range == (0.0, 0.0)
+    assert load_project(project)[3].saturation_scale_range == (1.0, 1.0)
+    assert load_samples(samples)[0].transform.hue_shift_degrees == 0.0
+    assert load_samples(samples)[0].transform.saturation_scale == 1.0
 
 
 @pytest.mark.parametrize(

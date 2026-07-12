@@ -45,15 +45,81 @@ def test_main_window_defaults_and_result_rows(qtbot):
     assert window.results_table.item(0, 7).text() == "8.50"
 
 
-def test_test_image_workflows_are_visually_separated(qtbot):
+def test_main_layout_prioritizes_image_workspace(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    assert window.existing_images_group.title() == "Existing Images"
-    assert window.synthetic_images_group.title() == "Synthetic Test Images"
-    assert window.load_test_button.text() == "Open Images to Search"
-    assert window.load_background_button.text() == "Add Backgrounds for Generation"
-    assert window.generate_button.text() == "Generate Test Images"
+    assert window.main_splitter.widget(0) is window.control_panel
+    assert window.main_splitter.widget(1) is window.workspace_panel
+    assert window.control_panel.sizePolicy().horizontalStretch() == 0
+    assert window.workspace_panel.sizePolicy().horizontalStretch() == 1
+
+
+def test_control_panel_scrolls_instead_of_forcing_tall_window(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.test_source.setCurrentText("Synthetic Test Images")
+
+    assert window.control_panel.widgetResizable()
+    assert window.control_panel.widget() is window.control_content
+    assert window.minimumSizeHint().height() <= 720
+
+
+def test_results_start_collapsed_and_toggle_without_clearing_rows(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.results_table.setRowCount(1)
+
+    assert window.result_tabs.isHidden()
+    assert window.results_toggle.text() == "Show Results"
+
+    window.results_toggle.click()
+    assert not window.result_tabs.isHidden()
+    assert window.results_toggle.text() == "Hide Results"
+
+    window.results_toggle.click()
+    assert window.result_tabs.isHidden()
+    assert window.results_table.rowCount() == 1
+
+
+def test_diagnostic_candidates_are_in_collapsed_advanced_settings(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.show_diagnostics.text() == "Show pre-filter candidates"
+    assert window.advanced_search_panel.isHidden()
+    assert "before overlap removal" in window.diagnostics_help.text()
+
+    window.advanced_search_toggle.click()
+    assert not window.advanced_search_panel.isHidden()
+
+
+def test_test_workflow_has_numbered_steps_and_shared_search_action(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.test_source_group.title() == "1. Choose Test Source"
+    assert window.prepare_images_group.title() == "2. Prepare Test Images"
+    assert window.run_search_group.title() == "3. Run Search"
+    assert window.run_button.parent() is window.run_search_group
+
+
+def test_test_source_switches_preparation_panel_without_clearing_state(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    paths = (Path("existing.png"),)
+    backgrounds = (np.zeros((4, 4, 3), dtype=np.uint8),)
+    window._test_paths = paths
+    window._backgrounds = backgrounds
+
+    assert window.test_source.currentText() == "Existing Images"
+    assert window.prepare_stack.currentWidget() is window.existing_images_panel
+
+    window.test_source.setCurrentText("Synthetic Test Images")
+
+    assert window.prepare_stack.currentWidget() is window.synthetic_images_panel
+    assert window._test_paths is paths
+    assert window._backgrounds is backgrounds
 
 
 def test_invalid_run_shows_concrete_message_without_clearing_results(qtbot, monkeypatch):
@@ -98,6 +164,65 @@ def test_max_results_enforces_documented_range(qtbot):
     assert window.max_results.value() == 1
     window.max_results.setValue(101)
     assert window.max_results.value() == 100
+
+
+def test_loading_train_image_enables_roi_training(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    image = np.zeros((30, 40, 3), dtype=np.uint8)
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: ("train.png", ""),
+    )
+    monkeypatch.setattr("searchmax.ui.main_window.read_image", lambda path: image)
+
+    assert not window.train_roi_button.isEnabled()
+
+    window.load_train_image()
+
+    assert window.train_roi_button.isEnabled()
+
+
+def test_trained_model_populates_persistent_roi_preview(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+
+    window._set_model(model)
+
+    assert np.array_equal(window.template_preview.image, model.color)
+
+
+def test_loading_test_image_does_not_clear_roi_preview(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+    window._set_model(model)
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.QFileDialog.getOpenFileNames",
+        lambda *args, **kwargs: (["test.png"], ""),
+    )
+    monkeypatch.setattr(
+        "searchmax.ui.main_window.read_image",
+        lambda path: np.zeros((30, 40, 3), np.uint8),
+    )
+
+    window.load_test_images()
+
+    assert np.array_equal(window.template_preview.image, model.color)
+
+
+def test_clicking_roi_preview_displays_template_in_main_view(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    model = _model()
+    shown = []
+    monkeypatch.setattr(window.image_view, "set_image", shown.append)
+    window._set_model(model)
+
+    window.template_preview.clicked.emit()
+
+    assert np.array_equal(shown[-1], model.color)
 
 
 def test_search_worker_failure_does_not_stop_later_input(monkeypatch, qtbot):
@@ -261,11 +386,29 @@ def test_generation_settings_preserve_loaded_non_search_ranges(qtbot):
         contrast_range=(.8, 1.2),
         blur_choices=(0, 3, 5),
         noise_sigma_range=(0, 2),
+        hue_shift_range=(-30, 45),
+        saturation_scale_range=(0.2, 1.2),
     )
 
     window._apply_generation_settings(loaded)
 
     assert window.generation_settings() == loaded
+    assert window.hue_min.value() == -30
+    assert window.hue_max.value() == 45
+    assert window.saturation_min.value() == 0.2
+    assert window.saturation_max.value() == 1.2
+
+
+def test_generation_hue_controls_default_to_medium_variation(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.hue_min.value() == -60
+    assert window.hue_max.value() == 60
+    assert window.generation_settings().hue_shift_range == (-60, 60)
+    assert window.saturation_min.value() == 0
+    assert window.saturation_max.value() == 1
+    assert window.generation_settings().saturation_scale_range == (0, 1)
 
 
 def test_search_worker_emits_extra_diagnostics_only_when_requested(monkeypatch):
