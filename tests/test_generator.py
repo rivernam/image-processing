@@ -56,6 +56,9 @@ def test_settings_reject_invalid_output_size():
         ({"hue_shift_range": (2, -2)}, "hue_shift_range"),
         ({"hue_shift_range": (-181, 0)}, "hue_shift_range"),
         ({"hue_shift_range": (0, 181)}, "hue_shift_range"),
+        ({"saturation_scale_range": (1, 0)}, "saturation_scale_range"),
+        ({"saturation_scale_range": (-0.1, 1)}, "saturation_scale_range"),
+        ({"saturation_scale_range": (0, 2.1)}, "saturation_scale_range"),
     ],
 )
 def test_settings_reject_invalid_values(kwargs, message):
@@ -153,6 +156,7 @@ def test_supplied_background_and_recorded_full_image_transform_are_exact(tmp_pat
         blur_choices=(3,),
         noise_sigma_range=(0, 0),
         hue_shift_range=(0, 0),
+        saturation_scale_range=(1, 1),
     )
 
     [sample] = generate_samples(
@@ -231,6 +235,7 @@ def test_hue_shift_changes_only_the_roi_object(tmp_path, hue_shift):
         blur_choices=(0,),
         noise_sigma_range=(0, 0),
         hue_shift_range=(hue_shift, hue_shift),
+        saturation_scale_range=(1, 1),
     )
 
     [sample] = generate_samples(model, [background], tmp_path, settings)
@@ -243,3 +248,32 @@ def test_hue_shift_changes_only_the_roi_object(tmp_path, hue_shift):
     roi = image[box.y : box.y + box.height, box.x : box.x + box.width]
     assert np.array_equal(roi, template) is (hue_shift == 0)
     assert sample.transform.hue_shift_degrees == hue_shift
+
+
+@pytest.mark.parametrize("saturation_scale", [0.0, 1.0])
+def test_saturation_scale_changes_only_the_roi_object(tmp_path, saturation_scale):
+    template = np.full((8, 10, 3), (20, 120, 240), np.uint8)
+    template[:, 5:] = (30, 160, 80)
+    model = train_from_roi(template, Path("template.png"), Rect(0, 0, 10, 8))
+    background = np.full((20, 24, 3), 90, np.uint8)
+    settings = GenerationSettings(
+        count=1, seed=4, output_size=(24, 20), min_scale=1, max_scale=1,
+        brightness_range=(0, 0), contrast_range=(1, 1), blur_choices=(0,),
+        noise_sigma_range=(0, 0), hue_shift_range=(0, 0),
+        saturation_scale_range=(saturation_scale, saturation_scale),
+    )
+
+    [sample] = generate_samples(model, [background], tmp_path, settings)
+
+    image = read_image(sample.image_path)
+    box = sample.truth_box
+    outside = np.ones(image.shape[:2], dtype=bool)
+    outside[box.y : box.y + box.height, box.x : box.x + box.width] = False
+    assert np.array_equal(image[outside], background[outside])
+    roi = image[box.y : box.y + box.height, box.x : box.x + box.width]
+    if saturation_scale == 0:
+        assert np.array_equal(roi[:, :, 0], roi[:, :, 1])
+        assert np.array_equal(roi[:, :, 1], roi[:, :, 2])
+    else:
+        assert np.array_equal(roi, template)
+    assert sample.transform.saturation_scale == saturation_scale

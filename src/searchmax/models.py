@@ -47,6 +47,7 @@ class MatchResults(list[MatchResult]):
 class TransformRecord:
     scale: float; brightness: float; contrast: float; blur_kernel: int; noise_sigma: float
     hue_shift_degrees: float = 0.0
+    saturation_scale: float = 1.0
 
 
 @dataclass(frozen=True)
